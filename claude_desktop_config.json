@@ -1,0 +1,18 @@
+{
+  "mcpServers": {
+    "docker-swish": {
+      "command": "uv",
+      "args": [
+        "--directory",
+        "/path-to/docker-swish-mcp",
+        "run",
+        "python",
+        "-m",
+        "docker_swish_mcp.main"
+      ],
+      "env": {
+        "LOG_LEVEL": "INFO"
+      }
+    }
+  }
+}
