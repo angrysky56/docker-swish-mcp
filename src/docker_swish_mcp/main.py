@@ -22,6 +22,9 @@ from typing import Any
 import aiohttp
 from mcp.server.fastmcp import FastMCP
 
+# Import the persistent session manager
+from .simple_session import SimplePrologSession
+
 # Try to import docker, but don't fail if not available
 try:
     import docker
@@ -58,6 +61,7 @@ class SwishContext:
     swish_base_url: str = "http://localhost:3050"
     docker_available: bool = False
     container_ready: bool = False
+    prolog_session: SimplePrologSession | None = None
 
 
 def cleanup_processes() -> None:
@@ -68,6 +72,21 @@ def cleanup_processes() -> None:
     for task in background_tasks:
         if not task.done():
             task.cancel()
+
+    # Cleanup persistent Prolog session
+    if global_swish_context and global_swish_context.prolog_session:
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                # Schedule cleanup as a task if loop is running
+                task = loop.create_task(global_swish_context.prolog_session.cleanup())
+                background_tasks.add(task)
+            else:
+                # Run cleanup directly if no loop is running
+                asyncio.run(global_swish_context.prolog_session.cleanup())
+            logger.info("Prolog session cleaned up")
+        except Exception as e:
+            logger.debug(f"Prolog session cleanup: {e}")
 
     # Stop SWISH container if running
     if global_swish_context and global_swish_context.container:
@@ -222,6 +241,18 @@ async def start_swish_container(context: SwishContext) -> bool:
                         if response.status == 200:
                             context.container_ready = True
                             logger.info(f"✅ SWISH container ready at {context.swish_base_url}")
+
+                            # Initialize persistent Prolog session
+                            logger.info("🧠 Initializing persistent Prolog session...")
+                            context.prolog_session = SimplePrologSession(context.container_name)
+                            session_started = await context.prolog_session.start_session()
+
+                            if session_started:
+                                logger.info("✅ Persistent Prolog session ready")
+                            else:
+                                logger.warning("⚠️ Failed to start persistent Prolog session")
+                                logger.warning("Queries will fall back to individual execution mode")
+
                             return True
             except Exception as e:
                 logger.debug(f"Waiting for container readiness: {e}")
@@ -251,6 +282,8 @@ async def app_lifespan(server: FastMCP) -> AsyncIterator[SwishContext]:
     global global_swish_context
 
     logger.info(f"Initializing Docker SWISH MCP Server v{__version__}")
+
+    context = None  # Ensure context is always defined
 
     try:
         # Initialize Docker if available
@@ -314,14 +347,53 @@ async def app_lifespan(server: FastMCP) -> AsyncIterator[SwishContext]:
     finally:
         # Cleanup on shutdown
         logger.info("🛑 Shutting down Docker SWISH MCP server")
+
+        # Cleanup persistent session first
+        if context and context.prolog_session:
+            try:
+                await context.prolog_session.cleanup()
+                logger.info("✅ Persistent Prolog session cleaned up")
+            except Exception as e:
+                logger.debug(f"Session cleanup error: {e}")
+
         cleanup_processes()
         global_swish_context = None
+
+
+def refresh_container_reference(context: SwishContext) -> bool:
+    """Refresh the container reference in case it was recreated"""
+    try:
+        if not context.docker_available or not context.docker_client:
+            return False
+
+        # Try to get container by name
+        try:
+            container = context.docker_client.containers.get(context.container_name)
+            context.container = container
+            context.container_ready = (container.status == "running")
+            logger.info(f"Refreshed container reference: {context.container_name} ({container.id[:12]})")
+            return True
+        except Exception as e:
+            logger.warning(f"Could not refresh container reference: {e}")
+            context.container = None
+            context.container_ready = False
+            return False
+    except Exception as e:
+        logger.error(f"Error refreshing container reference: {e}")
+        return False
 
 
 def get_context() -> SwishContext:
     """Get current context with proper error handling"""
     if global_swish_context is None:
         raise RuntimeError("SWISH context not initialized. Server may not be properly started.")
+
+    # Auto-refresh container reference if needed
+    if (global_swish_context.docker_available and
+        global_swish_context.container and
+        not global_swish_context.container_ready):
+        refresh_container_reference(global_swish_context)
+
     return global_swish_context
 
 
@@ -345,17 +417,17 @@ mcp = FastMCP(
     lifespan=app_lifespan
 )
 
-# Prolog interaction tools
 @mcp.tool()
 async def execute_prolog_query(
     query: str,
     timeout: int = 30
 ) -> str:
     """
-    Execute a Prolog query against the running SWISH instance.
+    Execute a Prolog query against the running SWISH instance with persistent state.
 
     This is the primary way to interact with Prolog for logic programming,
-    reasoning, and knowledge base queries.
+    reasoning, and knowledge base queries. State persists between queries,
+    so consulted files and asserted facts remain available.
 
     Args:
         query: Prolog query to execute (e.g., "member(X, [1,2,3]).", "?- factorial(5, N).")
@@ -368,11 +440,59 @@ async def execute_prolog_query(
         context = get_context()
 
         if not context.container_ready:
-            return "❌ SWISH container is not ready. Please wait a moment and try again."
+            # Try to refresh container reference and check again
+            if context.docker_available:
+                refresh_success = refresh_container_reference(context)
+                if not refresh_success or not context.container_ready:
+                    return "❌ SWISH container is not ready. Please wait a moment and try again or restart the MCP server."
+            else:
+                return "❌ Docker not available. Cannot execute Prolog queries."
 
         # Validate query format
         if not query.strip():
             return "❌ Empty query provided"
+
+        # Use persistent session if available
+        if context.prolog_session:
+            try:
+                result = await context.prolog_session.execute_query(query, timeout)
+
+                # Format the response based on result type
+                clean_query = query.strip()
+                if clean_query.startswith("?-"):
+                    clean_query = clean_query[2:].strip()
+                if not clean_query.endswith('.'):
+                    clean_query = clean_query + '.'
+
+                if result["success"]:
+                    if result.get("response_type") == "solutions":
+                        solutions = result.get("solutions", [])
+                        return f"""✅ Query: {clean_query}
+📋 Results:
+{chr(10).join(f"  • {solution}" for solution in solutions)}
+
+💡 Total solutions: {len(solutions)} (persistent session)"""
+
+                    elif result.get("response_type") == "simple_success":
+                        return f"✅ Query: {clean_query}\n📋 Result: true (query succeeded)"
+
+                    else:
+                        return f"✅ Query: {clean_query}\n📋 Result: Query completed successfully"
+
+                elif result.get("response_type") == "failure":
+                    return f"❌ Query: {clean_query}\n📋 Result: false (no solutions found)"
+
+                else:
+                    error_msg = result.get("error", "Unknown error")
+                    return f"❌ Query: {clean_query}\n📋 Error: {error_msg}"
+
+            except Exception as session_error:
+                logger.warning(f"Persistent session failed: {session_error}")
+                logger.info("Falling back to direct execution mode")
+                # Fall through to backup execution mode below
+
+        # Backup execution mode (original implementation)
+        logger.info("Using direct container execution as fallback for Prolog query")
 
         # Clean up query - remove leading ?- if present, ensure ends with period
         clean_query = query.strip()
@@ -381,102 +501,9 @@ async def execute_prolog_query(
         if not clean_query.endswith('.'):
             clean_query = clean_query + '.'
 
-        # Execute query via SWISH Pengine API or direct execution fallback
-        import asyncio as asyncio_mod
-
-        # First try the web API
-        async with aiohttp.ClientSession() as session:
-            # Step 1: Create a pengine session
-            create_url = f"{context.swish_base_url}/pengine/create"
-            create_payload = {
-                "format": "json"
-            }
-
-            try:
-                # Create pengine
-                async with session.post(
-                    create_url,
-                    json=create_payload,
-                    timeout=aiohttp.ClientTimeout(total=5)  # Short timeout for web API
-                ) as create_response:
-
-                    if create_response.status == 200:
-                        create_result = await create_response.json()
-
-                        if "id" in create_result:
-                            pengine_id = create_result["id"]
-
-                            # Step 2: Query the pengine
-                            query_url = f"{context.swish_base_url}/pengine/ask"
-                            query_payload = {
-                                "id": pengine_id,
-                                "query": clean_query,
-                                "template": "Bindings",
-                                "chunk": 1
-                            }
-
-                            async with session.post(
-                                query_url,
-                                json=query_payload,
-                                timeout=aiohttp.ClientTimeout(total=timeout)
-                            ) as query_response:
-
-                                if query_response.status == 200:
-                                    result = await query_response.json()
-
-                                    # Step 3: Process results and destroy pengine
-                                    try:
-                                        destroy_url = f"{context.swish_base_url}/pengine/destroy"
-                                        await session.post(destroy_url, json={"id": pengine_id})
-                                    except Exception:
-                                        pass  # Don't fail if cleanup fails
-
-                                    # Format results based on pengine response format
-                                    if result.get("event") == "success":
-                                        data = result.get("data", [])
-                                        more = result.get("more", False)
-
-                                        if data:
-                                            formatted_results = []
-                                            for binding_set in data:
-                                                if isinstance(binding_set, dict):
-                                                    if binding_set:  # Non-empty bindings
-                                                        binding_str = ", ".join(f"{k} = {v}" for k, v in binding_set.items())
-                                                        formatted_results.append(binding_str)
-                                                    else:  # Empty dict means query succeeded with no variables
-                                                        formatted_results.append("true")
-                                                else:
-                                                    formatted_results.append(str(binding_set))
-
-                                            return f"""✅ Query: {clean_query}
-📋 Results:
-{chr(10).join(f"  • {result}" for result in formatted_results)}
-
-💡 Total solutions: {len(formatted_results)}{' (more available)' if more else ''}"""
-
-                                        else:
-                                            return f"✅ Query: {clean_query}\n📋 Result: true (query succeeded)"
-
-                                    elif result.get("event") == "failure":
-                                        return f"❌ Query: {clean_query}\n📋 Result: false (no solutions found)"
-
-                                    elif result.get("event") == "error":
-                                        error_data = result.get("data", result.get("error", "Unknown error"))
-                                        return f"❌ Prolog Error in query '{clean_query}': {error_data}"
-
-                                    else:
-                                        return f"✅ Query: {clean_query}\n📋 Result: {result}"
-
-            except Exception as web_error:
-                logger.debug(f"Web API failed, trying direct execution: {web_error}")
-
-        # Fallback to direct container execution if web API fails
-        logger.info("Using direct container execution as fallback for Prolog query")
-
+        # Execute query via direct container execution
         try:
             # Build the command to execute in the container
-            # We'll use a special format to capture both variable bindings and simple success/failure
-
             # For queries with variables, we need to format output specially
             if any(c.isupper() for c in clean_query):  # Has variables
                 prolog_cmd = f"""
@@ -504,13 +531,13 @@ async def execute_prolog_query(
             ]
 
             # Run the command asynchronously
-            process = await asyncio_mod.create_subprocess_exec(
+            process = await asyncio.create_subprocess_exec(
                 *cmd,
-                stdout=asyncio_mod.subprocess.PIPE,
-                stderr=asyncio_mod.subprocess.PIPE
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
             )
 
-            stdout, stderr = await asyncio_mod.wait_for(
+            stdout, stderr = await asyncio.wait_for(
                 process.communicate(), timeout=timeout
             )
 
@@ -551,15 +578,15 @@ async def execute_prolog_query(
 📋 Results:
 {chr(10).join(f"  • {result}" for result in results)}
 
-💡 Total solutions: {len(results)} (direct execution)"""
+💡 Total solutions: {len(results)} (direct execution - no persistence)"""
             else:
                 return f"✅ Query: {clean_query}\n📋 Result: Query completed successfully (direct execution)"
 
-        except asyncio_mod.TimeoutError:
+        except asyncio.TimeoutError:
             return f"⏱️ Query timed out after {timeout} seconds"
         except Exception as e:
             logger.error(f"Direct execution failed: {e}")
-            return f"❌ Failed to execute query via both web API and direct execution: {e}"
+            return f"❌ Failed to execute query via both persistent session and direct execution: {e}"
 
     except Exception as e:
         logger.error(f"Failed to execute Prolog query: {e}")
@@ -704,14 +731,23 @@ The MCP server is running but cannot manage containers.
 Please ensure Docker Desktop is running and accessible."""
 
         if not context.container:
-            return """❌ No SWISH container found
+            # Try to refresh container reference first
+            refresh_success = refresh_container_reference(context)
+            if not refresh_success:
+                return """❌ No SWISH container found
 
-Container failed to start during initialization.
-Check Docker status and restart the MCP server."""
+Container failed to start during initialization or was removed.
+Try restarting the MCP server or check Docker status."""
 
         try:
-            # Refresh container status
-            context.container.reload()
+            # Refresh container status - handle stale references
+            try:
+                context.container.reload()
+            except Exception as reload_error:
+                logger.warning(f"Container reload failed, trying to refresh reference: {reload_error}")
+                if not refresh_container_reference(context):
+                    return f"❌ Container reference is stale and could not be refreshed: {reload_error}"
+
             status = context.container.status
 
             # Check SWISH accessibility
@@ -729,6 +765,17 @@ Check Docker status and restart the MCP server."""
             # Get basic container info
             created = context.container.attrs.get('Created', 'Unknown')
 
+            # Get persistent session status
+            session_status = ""
+            if context.prolog_session:
+                session_info = context.prolog_session.get_status()
+                session_status = f"""
+🧠 Persistent Session: {'✅ Active' if session_info['active'] else '❌ Inactive'}
+📊 Queries Executed: {session_info['query_count']}
+📚 Consulted Files: {', '.join(session_info['consulted_files']) if session_info['consulted_files'] else 'None'}"""
+            else:
+                session_status = "\n🧠 Persistent Session: ⚠️ Not initialized"
+
             return f"""📊 SWISH Prolog Environment Status
 
 🐳 Container: {context.container.name} ({context.container.id[:12]})
@@ -736,9 +783,9 @@ Check Docker status and restart the MCP server."""
 🌐 URL: {context.swish_base_url}
 🚀 Service: {'✅ Ready for Prolog queries' if swish_accessible else '⚠️ Starting up...'}
 📅 Started: {created[:19] if 'T' in created else created}
-📁 Data: {context.data_dir}
+📁 Data: {context.data_dir}{session_status}
 
-💡 {'Ready to execute Prolog queries!' if swish_accessible else 'Container starting, please wait...'}
+💡 {'Ready to execute Prolog queries with persistent state!' if swish_accessible and context.prolog_session and context.prolog_session.get_status()['active'] else 'Container starting or session initializing, please wait...'}
 
 🧠 Available operations:
    - execute_prolog_query("member(X, [1,2,3]).")
@@ -791,6 +838,11 @@ async def load_knowledge_base(filename: str) -> str:
         result = await execute_prolog_query(consult_query)
 
         if "✅" in result:
+            # Track the consulted file in the persistent session
+            # Note: Simplified session doesn't track consulted files
+            # if context.prolog_session:
+            #     context.prolog_session.track_consult(consult_name)
+
             return f"""✅ Knowledge base '{check_filename}' loaded successfully!
 
 📚 The facts and rules from {check_filename} are now available.
@@ -806,6 +858,54 @@ async def load_knowledge_base(filename: str) -> str:
     except Exception as e:
         logger.error(f"Failed to load knowledge base: {e}")
         return f"❌ Failed to load knowledge base: {e}"
+
+
+@mcp.tool()
+async def restart_prolog_session() -> str:
+    """
+    Restart the persistent Prolog session.
+
+    This can be useful if the session becomes unresponsive or if you want
+    to start fresh while preserving consulted knowledge bases.
+
+    Returns:
+        Status of the restart operation
+    """
+    try:
+        context = get_context()
+
+        if not context.container_ready:
+            return "❌ SWISH container is not ready. Cannot restart Prolog session."
+
+        if not context.prolog_session:
+            logger.info("No existing session, creating new persistent session")
+            context.prolog_session = SimplePrologSession(context.container_name)
+            success = await context.prolog_session.start_session()
+
+            if success:
+                return "✅ New persistent Prolog session started successfully!"
+            else:
+                return "❌ Failed to start new persistent Prolog session"
+
+        # Restart existing session
+        logger.info("Restarting persistent Prolog session")
+        success = await context.prolog_session.restart_session()
+
+        if success:
+            session_info = context.prolog_session.get_status()
+            consulted_files = session_info.get('consulted_files', [])
+
+            restart_msg = "✅ Persistent Prolog session restarted successfully!"
+            if consulted_files:
+                restart_msg += f"\n📚 Re-consulted files: {', '.join(consulted_files)}"
+
+            return restart_msg
+        else:
+            return "❌ Failed to restart persistent Prolog session"
+
+    except Exception as e:
+        logger.error(f"Failed to restart Prolog session: {e}")
+        return f"❌ Failed to restart session: {e}"
 
 
 # AI assistance prompts for Prolog programming
