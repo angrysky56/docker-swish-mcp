@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import atexit
 import logging
+import os
 import signal
 import sys
 from collections.abc import AsyncIterator
@@ -45,7 +46,7 @@ class SwishContext:
     container: Any = None
     container_name: str = "swish-mcp-auto"
     port: int = 3050
-    data_dir: Path = Path.cwd() / "swish-data"
+    data_dir: Path = Path.cwd() / "swish-data-new"
     swish_base_url: str = "http://localhost:3050"
     docker_available: bool = False
     container_ready: bool = False
@@ -185,7 +186,6 @@ async def start_swish_container(context: SwishContext) -> bool:
                 "mcp-version": __version__,
                 "auto-managed": "true"
             },
-            # Use default SWISH startup - no custom command
             "restart_policy": {"Name": "no"}  # Don't auto-restart
         }
 
