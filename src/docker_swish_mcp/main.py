@@ -1,11 +1,9 @@
 """
-Docker SWISH MCP Server - Improved Version
+Docker SWISH MCP Server - Prolog Integration
 
-This version includes:
-- Better error handling and logging
-- Proper MCP initialization response
-- Clearer separation between MCP server and Docker container
-- Enhanced debugging capabilities
+Automatically manages SWISH container lifecycle and provides seamless Prolog interaction.
+Container starts when MCP server starts, stops when MCP server stops.
+Main purpose: Enable Claude to use Prolog for logic programming and reasoning.
 """
 
 from __future__ import annotations
@@ -21,7 +19,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp import FastMCP, Context
 
 # Configure logging to stderr for MCP servers
 logging.basicConfig(
@@ -32,7 +30,8 @@ logging.basicConfig(
 logger = logging.getLogger("docker-swish-mcp")
 
 # Version info
-__version__ = "0.2.0"
+__version__ = "0.3.0"
+
 # Global tracking for cleanup
 running_processes: dict[str, Any] = {}
 background_tasks: set[asyncio.Task] = set()
@@ -43,11 +42,13 @@ global_swish_context: SwishContext | None = None
 class SwishContext:
     """Application context for SWISH operations"""
     docker_client: Any = None
-    container_name: str = "swish-mcp"
+    container: Any = None
+    container_name: str = "swish-mcp-auto"
     port: int = 3050
     data_dir: Path = Path.cwd() / "swish-data"
     swish_base_url: str = "http://localhost:3050"
     docker_available: bool = False
+    container_ready: bool = False
 
 
 def cleanup_processes() -> None:
@@ -59,17 +60,26 @@ def cleanup_processes() -> None:
         if not task.done():
             task.cancel()
 
-    # Stop any running containers
-    if global_swish_context and global_swish_context.docker_available:
+    # Stop SWISH container if running
+    if global_swish_context and global_swish_context.container:
         try:
-            import docker
-            client = docker.from_env()
-            container = client.containers.get(global_swish_context.container_name)
-            logger.info(f"Stopping container {global_swish_context.container_name}")
-            container.stop()
-            container.remove()
+            logger.info(f"Stopping SWISH container {global_swish_context.container_name}")
+            # First try graceful stop
+            global_swish_context.container.stop(timeout=5)
+            # Then remove the container
+            global_swish_context.container.remove(force=True)
+            logger.info("SWISH container stopped and removed successfully")
         except Exception as e:
             logger.debug(f"Container cleanup: {e}")
+            # Try to force remove if graceful stop failed
+            try:
+                if global_swish_context.docker_available:
+                    import docker
+                    client = docker.from_env()
+                    container = client.containers.get(global_swish_context.container_name)
+                    container.remove(force=True)
+            except Exception as e2:
+                logger.debug(f"Force cleanup also failed: {e2}")
 
     # Clear collections
     running_processes.clear()
@@ -82,9 +92,157 @@ def signal_handler(signum: int, frame: Any) -> None:
     cleanup_processes()
     sys.exit(0)
 
+
+async def start_swish_container(context: SwishContext) -> bool:
+    """
+    Start SWISH container automatically with proper cleanup and port management.
+
+    Returns:
+        True if container started successfully, False otherwise
+    """
+    try:
+        if not context.docker_available:
+            logger.warning("Docker not available, cannot start SWISH container")
+            return False
+
+        docker_client = context.docker_client
+
+        # Ensure data directory exists (mount the swish-data directly)
+        data_path = context.data_dir  # Mount swish-data/ to /data in container
+        data_path.mkdir(exist_ok=True)
+
+        # Clean up any existing containers with our name
+        try:
+            existing = docker_client.containers.get(context.container_name)
+            logger.info(f"Found existing container {context.container_name} with status: {existing.status}")
+
+            if existing.status == "running":
+                # Check if it's responsive
+                try:
+                    import aiohttp
+                    async with aiohttp.ClientSession() as session:
+                        async with session.get(
+                            f"{context.swish_base_url}/",
+                            timeout=aiohttp.ClientTimeout(total=2)
+                        ) as response:
+                            if response.status == 200:
+                                logger.info("✅ Existing SWISH container is working, reusing it")
+                                context.container = existing
+                                context.container_ready = True
+                                return True
+                except Exception:
+                    logger.info("Existing container not responsive, will replace it")
+
+                # Stop and remove unresponsive container
+                existing.stop(timeout=5)
+
+            # Remove any existing container (stopped or unresponsive)
+            existing.remove(force=True)
+            logger.info(f"Removed existing container: {context.container_name}")
+
+        except Exception as e:
+            logger.debug(f"No existing container found: {e}")
+
+        # Check for port conflicts and clean them up
+        try:
+            # List all containers using our port
+            all_containers = docker_client.containers.list(all=True)
+            for container in all_containers:
+                if container.ports and any(
+                    binding and str(context.port) in str(binding)
+                    for bindings in container.ports.values()
+                    for binding in (bindings or [])
+                ):
+                    if container.name != context.container_name:
+                        logger.warning(f"Port {context.port} in use by container {container.name}, stopping it")
+                        try:
+                            if container.status == "running":
+                                container.stop(timeout=5)
+                            container.remove(force=True)
+                        except Exception as e:
+                            logger.warning(f"Could not remove conflicting container: {e}")
+        except Exception as e:
+            logger.debug(f"Port conflict check failed: {e}")
+
+        # Pull latest image
+        logger.info("Ensuring SWISH image is available...")
+        try:
+            docker_client.images.pull("swipl/swish:latest")
+        except Exception as e:
+            logger.warning(f"Could not pull latest image: {e}")
+
+        # Container configuration for automatic management
+        container_config = {
+            "image": "swipl/swish:latest",
+            "name": context.container_name,
+            "ports": {"3050/tcp": context.port},
+            "volumes": {str(data_path): {"bind": "/data", "mode": "rw"}},
+            "detach": True,
+            "remove": False,
+            "environment": {},
+            "labels": {
+                "managed-by": "docker-swish-mcp",
+                "mcp-version": __version__,
+                "auto-managed": "true"
+            },
+            # Use default SWISH startup - no custom command
+            "restart_policy": {"Name": "no"}  # Don't auto-restart
+        }
+
+        # Start container
+        logger.info(f"Starting SWISH container on port {context.port}...")
+        container = docker_client.containers.run(**container_config)
+        context.container = container
+
+        # Wait for container to be ready
+        max_wait = 30
+        for i in range(max_wait):
+            try:
+                # Refresh container status
+                container.reload()
+                if container.status != "running":
+                    logger.error(f"Container failed to start properly, status: {container.status}")
+                    # Get container logs for debugging
+                    logs = container.logs().decode('utf-8', errors='ignore')
+                    logger.error(f"Container logs: {logs}")
+                    return False
+
+                # Check if SWISH is responding
+                import aiohttp
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(
+                        f"{context.swish_base_url}/",
+                        timeout=aiohttp.ClientTimeout(total=2)
+                    ) as response:
+                        if response.status == 200:
+                            context.container_ready = True
+                            logger.info(f"✅ SWISH container ready at {context.swish_base_url}")
+                            return True
+            except Exception as e:
+                logger.debug(f"Waiting for container readiness: {e}")
+
+            await asyncio.sleep(1)
+
+        logger.error("SWISH container failed to become ready within timeout")
+        context.container_ready = False
+
+        # If we get here, try to get logs for debugging
+        try:
+            logs = container.logs().decode('utf-8', errors='ignore')
+            logger.error(f"Container logs: {logs}")
+        except Exception:
+            pass
+
+        return False
+
+    except Exception as e:
+        logger.error(f"Failed to start SWISH container: {e}")
+        return False
+
+
 @asynccontextmanager
 async def app_lifespan(server: FastMCP) -> AsyncIterator[SwishContext]:
-    """Manage application lifecycle with proper initialization"""
+    """Manage application lifecycle with automatic SWISH container management"""
     global global_swish_context
 
     logger.info(f"Initializing Docker SWISH MCP Server v{__version__}")
@@ -101,7 +259,6 @@ async def app_lifespan(server: FastMCP) -> AsyncIterator[SwishContext]:
             logger.info("✅ Docker client initialized successfully")
         except Exception as e:
             logger.warning(f"⚠️ Docker not available: {e}")
-            logger.warning("Running in limited mode - container management disabled")
             docker_client = None
             docker_available = False
 
@@ -115,12 +272,22 @@ async def app_lifespan(server: FastMCP) -> AsyncIterator[SwishContext]:
         context.data_dir.mkdir(exist_ok=True)
         logger.info(f"📁 Data directory: {context.data_dir}")
 
+        # Auto-start SWISH container if Docker is available
+        if docker_available:
+            logger.info("🚀 Starting SWISH container automatically...")
+            success = await start_swish_container(context)
+            if success:
+                logger.info("✅ SWISH container started successfully")
+            else:
+                logger.warning("⚠️ Failed to start SWISH container - running in limited mode")
+                logger.warning("Container management and Prolog queries will not be available")
+
         # Set global context
         global_swish_context = context
 
-        # Log server info
-        logger.info("🚀 MCP Server ready to accept connections")
-        logger.info(f"📍 SWISH URL will be: {context.swish_base_url}")
+        logger.info("🧠 MCP Server ready for Prolog interaction")
+        if context.container_ready:
+            logger.info(f"🌐 SWISH available at: {context.swish_base_url}")
 
         yield context
 
@@ -141,6 +308,7 @@ async def app_lifespan(server: FastMCP) -> AsyncIterator[SwishContext]:
         logger.info("🛑 Shutting down Docker SWISH MCP server")
         cleanup_processes()
         global_swish_context = None
+
 
 def get_context() -> SwishContext:
     """Get current context with proper error handling"""
@@ -165,314 +333,11 @@ logger.info("Creating FastMCP server instance...")
 mcp = FastMCP(
     name="Docker-SWISH-MCP",
     version=__version__,
-    description="Manage Docker SWISH containers and Prolog knowledge bases",
+    description="Seamless Prolog integration with auto-managed SWISH container",
     lifespan=app_lifespan
 )
 
-# Log available tools on startup
-logger.info("Registering MCP tools...")
-
-@mcp.tool()
-async def start_swish_container(
-    port: int = 3050,
-    data_dir: str | None = None,
-    auth_mode: str = "anon",
-    https: bool = False,
-    detached: bool = True
-) -> str:
-    """
-    Start a Docker SWISH container for SWI-Prolog programming.
-
-    This tool manages the lifecycle of a SWISH (SWI-Prolog for SHaring) container,
-    providing a web-based Prolog development environment.
-
-    Args:
-        port: Port to expose SWISH on (default: 3050)
-        data_dir: Host directory to mount as /data (default: ./swish-data)
-        auth_mode: Authentication mode - 'anon' (anonymous), 'social' (OAuth), 'always' (required)
-        https: Enable HTTPS with self-signed certificate
-        detached: Run container in background
-
-    Returns:
-        Status message with container information
-
-    Example:
-        start_swish_container(port=3051, auth_mode="social")
-    """
-    logger.info(f"Tool called: start_swish_container(port={port}, auth_mode={auth_mode})")
-
-    try:
-        context = get_context()
-
-        if not context.docker_available:
-            return """❌ Docker is not available. Please ensure:
-1. Docker Desktop is installed and running
-2. You have permission to access Docker
-3. The docker Python package is installed (uv add docker)"""
-
-        docker_client = context.docker_client
-
-        # Set up data directory
-        if data_dir:
-            data_path = Path(data_dir).expanduser().resolve()
-        else:
-            data_path = context.data_dir / "data"
-
-        data_path.mkdir(parents=True, exist_ok=True)
-        logger.info(f"Using data directory: {data_path}")
-
-        # Check for existing container
-        try:
-            existing = docker_client.containers.get(context.container_name)
-            if existing.status == "running":
-                logger.info(f"Container {context.container_name} already running")
-                return f"""ℹ️ SWISH container already running
-🌐 Access at: {context.swish_base_url}
-💡 Use stop_swish_container() to stop it first"""
-            else:
-                logger.info(f"Removing stopped container: {context.container_name}")
-                existing.remove()
-        except Exception as e:
-            logger.debug(f"No existing container found: {e}")
-
-        # Validate auth mode
-        if auth_mode not in ["anon", "social", "always"]:
-            return "❌ Invalid auth_mode. Use: 'anon', 'social', or 'always'"
-
-        # Build container configuration
-        container_config = {
-            "image": "swipl/swish:latest",
-            "name": context.container_name,
-            "ports": {"3050/tcp": port},
-            "volumes": {str(data_path): {"bind": "/data", "mode": "rw"}},
-            "detach": detached,
-            "remove": False,
-            "environment": {},
-            "labels": {
-                "managed-by": "docker-swish-mcp",
-                "mcp-version": __version__
-            }
-        }
-
-        # Add command arguments for auth and https
-        command_args = []
-        if auth_mode != "anon":
-            command_args.extend(["--auth", auth_mode])
-        if https:
-            command_args.append("--https")
-
-        if command_args:
-            container_config["command"] = command_args
-
-        # Pull image if needed
-        logger.info("Ensuring SWISH image is available...")
-        try:
-            docker_client.images.pull("swipl/swish:latest")
-        except Exception as e:
-            logger.warning(f"Could not pull latest image: {e}")
-
-        # Start container
-        logger.info(f"Starting SWISH container on port {port}...")
-        container = docker_client.containers.run(**container_config)
-
-        # Update context
-        context.port = port
-        context.swish_base_url = f"{'https' if https else 'http'}://localhost:{port}"
-
-        # Track container
-        running_processes[context.container_name] = container
-
-        # Wait a moment for container to start
-        await asyncio.sleep(2)
-
-        return f"""✅ SWISH container started successfully!
-
-🌐 Access SWISH at: {context.swish_base_url}
-📁 Data directory: {data_path}
-🔒 Authentication: {auth_mode}
-🔐 HTTPS: {'enabled' if https else 'disabled'}
-📋 Container ID: {container.id[:12]}
-
-💡 Next steps:
-- Create Prolog files with create_prolog_file()
-- Execute queries with execute_prolog_query()
-- Check status with get_swish_status()"""
-
-    except Exception as e:
-        logger.error(f"Failed to start SWISH container: {e}", exc_info=True)
-        return f"❌ Failed to start SWISH container: {str(e)}"
-
-
-@mcp.tool()
-async def stop_swish_container() -> str:
-    """
-    Stop the running SWISH container.
-
-    This will stop and remove the container, but preserve any data
-    in the mounted data directory.
-
-    Returns:
-        Status message
-    """
-    logger.info("Tool called: stop_swish_container()")
-
-    try:
-        context = get_context()
-
-        if not context.docker_available:
-            return "❌ Docker is not available"
-
-        docker_client = context.docker_client
-
-        try:
-            container = docker_client.containers.get(context.container_name)
-
-            logger.info(f"Stopping container {context.container_name}...")
-            container.stop(timeout=10)
-            container.remove()
-
-            # Remove from tracking
-            if context.container_name in running_processes:
-                del running_processes[context.container_name]
-
-            return f"""✅ SWISH container stopped and removed
-
-📁 Data preserved in: {context.data_dir}
-💡 Start again with start_swish_container()"""
-
-        except Exception as e:
-            logger.debug(f"Container not found: {e}")
-            return "ℹ️ No SWISH container is currently running"
-
-    except Exception as e:
-        logger.error(f"Failed to stop container: {e}", exc_info=True)
-        return f"❌ Failed to stop container: {str(e)}"
-
-
-@mcp.tool()
-async def get_swish_status() -> str:
-    """
-    Get the current status of the SWISH container and service.
-
-    Provides detailed information about:
-    - Container status and health
-    - Service accessibility
-    - Resource usage
-    - Configuration details
-
-    Returns:
-        Detailed status information
-    """
-    logger.info("Tool called: get_swish_status()")
-
-    try:
-        context = get_context()
-
-        if not context.docker_available:
-            return """⚠️ Docker is not available
-
-The MCP server is running but cannot manage containers.
-Please ensure Docker Desktop is running."""
-
-        docker_client = context.docker_client
-
-        try:
-            container = docker_client.containers.get(context.container_name)
-
-            # Get container details
-            status = container.status
-            stats = container.stats(stream=False)
-            created = container.attrs['Created']
-
-            # Check SWISH accessibility
-            swish_accessible = False
-            error_msg = ""
-            try:
-                import aiohttp
-                async with aiohttp.ClientSession() as session:
-                    async with session.get(
-                        f"{context.swish_base_url}/",
-                        timeout=aiohttp.ClientTimeout(total=5),
-                        ssl=False
-                    ) as response:
-                        swish_accessible = response.status == 200
-            except Exception as e:
-                error_msg = str(e)
-
-            # Format memory usage
-            memory_usage = stats.get('memory_stats', {}).get('usage', 0)
-            memory_mb = memory_usage / (1024 * 1024)
-
-            return f"""📊 SWISH Container Status
-
-🐳 Container: {container.name} ({container.id[:12]})
-📊 Status: {status.upper()}
-🌐 URL: {context.swish_base_url}
-🚀 Service: {'✅ Accessible' if swish_accessible else f'❌ Not accessible ({error_msg})'}
-💾 Memory: {memory_mb:.1f} MB
-📅 Created: {created}
-📁 Data: {context.data_dir}
-
-💡 Container is {'ready for use' if status == 'running' and swish_accessible else 'starting up...' if status == 'running' else 'not running'}"""
-
-        except Exception:
-            return f"""ℹ️ No SWISH container found
-
-🔍 Container '{context.container_name}' is not running
-💡 Start with: start_swish_container()
-📁 Data directory: {context.data_dir}"""
-
-    except Exception as e:
-        logger.error(f"Failed to get status: {e}", exc_info=True)
-        return f"❌ Failed to get status: {str(e)}"
-
-
-@mcp.tool()
-async def test_mcp_connection() -> str:
-    """
-    Test that the MCP server is working correctly.
-
-    This is a simple diagnostic tool to verify:
-    - MCP server is responding
-    - Python environment is set up
-    - Basic functionality works
-
-    Returns:
-        Test results and server information
-    """
-    logger.info("Tool called: test_mcp_connection()")
-
-    try:
-        context = get_context()
-
-        # Gather system info
-        import platform
-
-        return f"""✅ MCP Server Connection Test Successful!
-
-🔧 Server Information:
-- Name: Docker-SWISH-MCP
-- Version: {__version__}
-- Python: {platform.python_version()}
-- Platform: {platform.platform()}
-
-🐳 Docker Status:
-- Available: {'✅ Yes' if context.docker_available else '❌ No'}
-- Data Dir: {context.data_dir}
-- Container Name: {context.container_name}
-
-📋 Available Tools:
-- start_swish_container() - Launch SWISH
-- stop_swish_container() - Stop SWISH
-- get_swish_status() - Check status
-- test_mcp_connection() - This test
-
-🎯 Everything is working correctly!"""
-
-    except Exception as e:
-        logger.error(f"Test failed: {e}", exc_info=True)
-        return f"❌ Test failed: {str(e)}"
-
+# Prolog interaction tools
 @mcp.tool()
 async def execute_prolog_query(
     query: str,
@@ -481,35 +346,41 @@ async def execute_prolog_query(
     """
     Execute a Prolog query against the running SWISH instance.
 
+    This is the primary way to interact with Prolog for logic programming,
+    reasoning, and knowledge base queries.
+
     Args:
-        query: Prolog query to execute (e.g., "member(X, [1,2,3]).")
+        query: Prolog query to execute (e.g., "member(X, [1,2,3]).", "?- factorial(5, N).")
         timeout: Timeout in seconds for query execution
 
     Returns:
         Query results or error message
     """
     try:
-        # FIXED: Use global context instead of mcp.request_context
         context = get_context()
+
+        if not context.container_ready:
+            return "❌ SWISH container is not ready. Please wait a moment and try again."
 
         # Validate query format
         if not query.strip():
             return "❌ Empty query provided"
 
-        # Ensure query ends with period
-        if not query.strip().endswith('.'):
-            query = query.strip() + '.'
+        # Clean up query - remove leading ?- if present, ensure ends with period
+        clean_query = query.strip()
+        if clean_query.startswith("?-"):
+            clean_query = clean_query[2:].strip()
+        if not clean_query.endswith('.'):
+            clean_query = clean_query + '.'
 
         # Execute query via SWISH API
-
         import aiohttp
 
         async with aiohttp.ClientSession() as session:
-            # SWISH query endpoint
             url = f"{context.swish_base_url}/ask"
 
             payload = {
-                "q": query,
+                "q": clean_query,
                 "template": "json-s",
                 "chunk": 1
             }
@@ -530,17 +401,30 @@ async def execute_prolog_query(
                     if "bindings" in result and result["bindings"]:
                         formatted_results = []
                         for binding in result["bindings"]:
-                            formatted_results.append(str(binding))
+                            if isinstance(binding, dict):
+                                # Format variable bindings nicely
+                                binding_str = ", ".join(f"{k} = {v}" for k, v in binding.items())
+                                formatted_results.append(binding_str)
+                            else:
+                                formatted_results.append(str(binding))
 
-                        return f"""✅ Query: {query}
+                        return f"""✅ Query: {clean_query}
 📋 Results:
-{chr(10).join(f"  • {result}" for result in formatted_results)}"""
+{chr(10).join(f"  • {result}" for result in formatted_results)}
+
+💡 Total solutions: {len(formatted_results)}"""
 
                     elif "error" in result:
                         return f"❌ Prolog Error: {result['error']}"
 
+                    elif result.get("success") is True:
+                        return f"✅ Query: {clean_query}\n📋 Result: true (query succeeded)"
+
+                    elif result.get("success") is False:
+                        return f"❌ Query: {clean_query}\n📋 Result: false (query failed)"
+
                     else:
-                        return f"✅ Query: {query}\n📋 Result: {result}"
+                        return f"✅ Query: {clean_query}\n📋 Result: {result}"
 
             except asyncio.TimeoutError:
                 return f"⏱️ Query timed out after {timeout} seconds"
@@ -561,24 +445,26 @@ async def create_prolog_file(
     """
     Create a Prolog knowledge base file in the SWISH data directory.
 
+    Use this to create logic programs, facts, and rules that can be
+    consulted and used in Prolog queries.
+
     Args:
         filename: Name of the .pl file (without extension)
-        content: Prolog code content
+        content: Prolog code content (facts, rules, predicates)
         overwrite: Whether to overwrite existing file
 
     Returns:
-        Status message
+        Status message with instructions on how to use the file
     """
     try:
-        # FIXED: Use global context instead of mcp.request_context
         context = get_context()
 
         # Ensure filename has .pl extension
         if not filename.endswith('.pl'):
             filename = f"{filename}.pl"
 
-        # Create file path in data directory
-        file_path = context.data_dir / "data" / filename
+        # Create file path in swish-data directory (mounted as /data in container)
+        file_path = context.data_dir / filename
         file_path.parent.mkdir(parents=True, exist_ok=True)
 
         # Check if file exists
@@ -590,10 +476,19 @@ async def create_prolog_file(
             f.write(content)
 
         logger.info(f"Created Prolog file: {file_path}")
+
+        # Get the basename without extension for consulting
+        base_name = filename[:-3] if filename.endswith('.pl') else filename
+
         return f"""✅ Created Prolog file: {filename}
 📁 Path: {file_path}
 📝 Size: {len(content)} characters
-🔄 Use 'consult({filename[:-3]}).' in SWISH to load"""
+🔄 To use this knowledge base, run: ?- consult({base_name}).
+
+💡 Example queries after consulting:
+   - List all predicates: ?- current_predicate(F/A).
+   - Get help: ?- help({base_name}).
+"""
 
     except Exception as e:
         logger.error(f"Failed to create Prolog file: {e}")
@@ -605,36 +500,54 @@ async def list_prolog_files() -> str:
     """
     List all Prolog files in the SWISH data directory.
 
+    Shows available knowledge bases that can be consulted.
+
     Returns:
-        List of available Prolog files
+        List of available Prolog files with sizes and usage instructions
     """
     try:
-        # FIXED: Use global context instead of mcp.request_context
-        data_path = get_context().data_dir / "data"
+        context = get_context()
+        data_path = context.data_dir
 
         if not data_path.exists():
-            return "📁 No data directory found. Create some Prolog files first."
+            return "📁 No data directory found. Create some Prolog files first with create_prolog_file()."
 
         # Find all .pl files
         prolog_files = list(data_path.glob("*.pl"))
 
         if not prolog_files:
-            return "📁 No Prolog files found in data directory."
+            return """📁 No Prolog files found in data directory.
+
+💡 Create your first knowledge base:
+   create_prolog_file("example", "
+   % Facts
+   parent(tom, bob).
+   parent(bob, ann).
+
+   % Rules
+   grandparent(X, Z) :- parent(X, Y), parent(Y, Z).
+   ")"""
 
         file_info = []
         for file_path in sorted(prolog_files):
             try:
                 stat = file_path.stat()
                 size = stat.st_size
+                base_name = file_path.stem
 
                 file_info.append(f"  📄 {file_path.name} ({size} bytes)")
+                file_info.append(f"      💡 Load with: ?- consult({base_name}).")
             except Exception:
                 file_info.append(f"  📄 {file_path.name}")
 
-        return f"""📚 Prolog Files in {data_path}:
+        return f"""📚 Prolog Knowledge Bases in {data_path}:
 {chr(10).join(file_info)}
 
-💡 Load in SWISH with: ?- consult(filename)."""
+🔄 After loading files, you can:
+   - Query facts: ?- parent(tom, bob).
+   - Test rules: ?- grandparent(tom, ann).
+   - List predicates: ?- current_predicate(F/A).
+"""
 
     except Exception as e:
         logger.error(f"Failed to list Prolog files: {e}")
@@ -642,136 +555,305 @@ async def list_prolog_files() -> str:
 
 
 @mcp.tool()
-async def configure_swish_auth(
-    auth_mode: str,
-    username: str | None = None,
-    email: str | None = None
-) -> str:
+async def get_swish_status() -> str:
     """
-    Configure SWISH authentication settings.
+    Get the current status of the SWISH container and Prolog environment.
 
-    Args:
-        auth_mode: Authentication mode (anon, social, always)
-        username: Username for 'always' mode
-        email: Email for 'always' mode
+    Useful for troubleshooting and checking if the Prolog environment is ready.
 
     Returns:
-        Configuration status
+        Detailed status information about the SWISH container and service
     """
     try:
-        if auth_mode not in ["anon", "social", "always"]:
-            return "❌ Invalid auth_mode. Use: anon, social, or always"
+        context = get_context()
 
-        # For 'always' mode, require username and email
-        if auth_mode == "always" and (not username or not email):
-            return "❌ Username and email required for 'always' auth mode"
+        if not context.docker_available:
+            return """⚠️ Docker is not available
 
-        if auth_mode == "always" and username and email:
-            # This would typically require interactive input in real SWISH
-            # For now, we'll document the requirement
-            return f"""⚠️ Authentication mode '{auth_mode}' requires interactive setup.
+The MCP server is running but cannot manage containers.
+Please ensure Docker Desktop is running and accessible."""
 
-To configure authenticated mode:
-1. Stop the current container
-2. Start with: docker run -it swish --auth always --add-user
-3. Follow prompts to create user: {username} ({email})
-4. Restart with: docker run swish --auth always
+        if not context.container:
+            return """❌ No SWISH container found
 
-Note: Authenticated mode allows executing arbitrary Prolog code."""
+Container failed to start during initialization.
+Check Docker status and restart the MCP server."""
 
-        return f"""✅ Authentication configured: {auth_mode}
-🔧 Restart container to apply changes.
+        try:
+            # Refresh container status
+            context.container.reload()
+            status = context.container.status
 
-Modes:
-• anon: Anonymous access (sandboxed queries only)
-• social: Social login (Google, StackOverflow)
-• always: Full authentication required"""
+            # Check SWISH accessibility
+            swish_accessible = False
+            try:
+                import aiohttp
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(
+                        f"{context.swish_base_url}/",
+                        timeout=aiohttp.ClientTimeout(total=3)
+                    ) as response:
+                        swish_accessible = response.status == 200
+            except Exception:
+                pass
+
+            # Get basic container info
+            created = context.container.attrs.get('Created', 'Unknown')
+
+            return f"""📊 SWISH Prolog Environment Status
+
+🐳 Container: {context.container.name} ({context.container.id[:12]})
+📊 Status: {status.upper()}
+🌐 URL: {context.swish_base_url}
+🚀 Service: {'✅ Ready for Prolog queries' if swish_accessible else '⚠️ Starting up...'}
+📅 Started: {created[:19] if 'T' in created else created}
+📁 Data: {context.data_dir}
+
+💡 {'Ready to execute Prolog queries!' if swish_accessible else 'Container starting, please wait...'}
+
+🧠 Available operations:
+   - execute_prolog_query("member(X, [1,2,3]).")
+   - create_prolog_file("my_kb", "fact(a). rule(X) :- fact(X).")
+   - list_prolog_files()
+"""
+
+        except Exception as e:
+            return f"❌ Error checking container status: {e}"
 
     except Exception as e:
-        logger.error(f"Failed to configure authentication: {e}")
-        return f"❌ Failed to configure authentication: {e}"
+        logger.error(f"Failed to get status: {e}")
+        return f"❌ Failed to get status: {e}"
 
 
-# Resources and prompts remain the same as original
-@mcp.resource("swish://container/logs")
-async def get_container_logs() -> str:
-    """Get logs from the running SWISH container."""
+@mcp.tool()
+async def load_knowledge_base(filename: str) -> str:
+    """
+    Load (consult) a Prolog knowledge base file into the SWISH session.
+
+    This makes the facts and rules in the file available for queries.
+
+    Args:
+        filename: Name of the .pl file to load (with or without extension)
+
+    Returns:
+        Status of the loading operation
+    """
     try:
-        return "Container logs resource - use get_swish_status() tool for current container information"
+        context = get_context()
+
+        if not context.container_ready:
+            return "❌ SWISH container is not ready. Please wait a moment and try again."
+
+        # Ensure filename has .pl extension for file checking
+        if not filename.endswith('.pl'):
+            check_filename = f"{filename}.pl"
+            consult_name = filename
+        else:
+            check_filename = filename
+            consult_name = filename[:-3]  # Remove .pl for consulting
+
+        # Check if file exists
+        file_path = context.data_dir / check_filename
+        if not file_path.exists():
+            return f"❌ File '{check_filename}' not found. Use list_prolog_files() to see available files."
+
+        # Load the knowledge base using consult
+        consult_query = f"consult({consult_name})."
+        result = await execute_prolog_query(consult_query)
+
+        if "✅" in result:
+            return f"""✅ Knowledge base '{check_filename}' loaded successfully!
+
+📚 The facts and rules from {check_filename} are now available.
+💡 You can now query them directly, for example:
+   - List all facts: ?- current_predicate(F/A).
+   - Query specific facts from your knowledge base
+
+🔍 File loaded from: {file_path}
+"""
+        else:
+            return f"⚠️ There may have been an issue loading the file:\n{result}"
+
     except Exception as e:
-        logger.error(f"Failed to get container logs: {e}")
-        return f"Error getting logs: {e}"
+        logger.error(f"Failed to load knowledge base: {e}")
+        return f"❌ Failed to load knowledge base: {e}"
 
 
-@mcp.resource("swish://files/{filename}")
-async def get_prolog_file_content(filename: str) -> str:
-    """Get content of a specific Prolog file."""
-    try:
-        return f"Prolog file content resource for: {filename}\nUse create_prolog_file() and list_prolog_files() tools for full file management functionality"
-    except Exception as e:
-        logger.error(f"Failed to read Prolog file: {e}")
-        return f"Error reading file: {e}"
-
-
-@mcp.resource("swish://knowledge-base")
-async def get_knowledge_base_summary() -> str:
-    """Get a summary of the current Prolog knowledge base."""
-    try:
-        return "Knowledge base summary resource - use list_prolog_files() tool for current knowledge base information"
-    except Exception as e:
-        logger.error(f"Failed to get knowledge base summary: {e}")
-        return f"Error getting knowledge base summary: {e}"
-
-
+# AI assistance prompts for Prolog programming
 @mcp.prompt()
 def prolog_programming_assistant(
     task_description: str,
     difficulty_level: str = "beginner"
 ) -> str:
-    """Generate a prompt for Prolog programming assistance."""
-    return f"""You are helping with Prolog programming. Here's the task:
+    """Generate a prompt for Prolog programming assistance tailored to specific tasks."""
+    return f"""You are an expert Prolog programming assistant helping with logic programming tasks.
 
 **Task**: {task_description}
 **Skill Level**: {difficulty_level}
 
 Please provide:
 1. **Prolog Code**: Well-commented solution with predicates and rules
-2. **Explanation**: How the logic works step by step
-3. **Example Queries**: Test queries to verify the solution
-4. **Best Practices**: Prolog-specific optimization tips
+2. **Step-by-Step Explanation**: How the logic works and why
+3. **Example Queries**: Test queries to verify the solution works
+4. **Usage Instructions**: How to load and use the code in SWISH
 
-For {difficulty_level} level:
+For {difficulty_level} level, focus on:
 {_get_level_guidance(difficulty_level)}
 
-Remember to:
-- Use descriptive predicate names
+**Prolog Best Practices to Follow:**
+- Use descriptive predicate names (snake_case)
 - Add comments explaining complex logic
-- Consider edge cases and base conditions
-- Follow Prolog naming conventions (lowercase, underscore_separated)"""
+- Handle base cases and recursive cases clearly
+- Consider cut operators (!) only when necessary
+- Test edge cases and boundary conditions
+
+**Remember**: The user has access to a SWISH environment where they can:
+- Create files with create_prolog_file("name", "content")
+- Load knowledge bases with load_knowledge_base("name")
+- Execute queries with execute_prolog_query("query")
+- List available files with list_prolog_files()
+
+Make your solution practical and ready to use in their environment.
+"""
+
+
+@mcp.prompt()
+def logic_rule_creation(
+    domain: str,
+    relationships: str
+) -> str:
+    """Generate a prompt for creating domain-specific logic rules in Prolog."""
+    return f"""You are helping create a Prolog knowledge base for the domain: {domain}
+
+**Domain**: {domain}
+**Relationships to model**: {relationships}
+
+Please create a comprehensive Prolog knowledge base that includes:
+
+1. **Facts**: Basic facts about entities in this domain
+2. **Rules**: Logical relationships and inference rules
+3. **Queries**: Example queries to demonstrate the knowledge base
+4. **Documentation**: Comments explaining the logic
+
+**Structure your response as:**
+```prolog
+% Knowledge Base for {domain}
+% Created for SWISH MCP environment
+
+% ============================================
+% FACTS (Basic information)
+% ============================================
+
+% [Your facts here]
+
+% ============================================
+% RULES (Logical relationships)
+% ============================================
+
+% [Your rules here]
+
+% ============================================
+% UTILITY PREDICATES (Helper functions)
+% ============================================
+
+% [Helper predicates here]
+```
+
+**Also provide example queries** that demonstrate:
+- Simple fact retrieval
+- Rule-based inference
+- Complex reasoning scenarios
+
+**Make it practical** - the user can immediately:
+1. Save this as a .pl file using create_prolog_file()
+2. Load it with load_knowledge_base()
+3. Test it with execute_prolog_query()
+
+Focus on clarity, correctness, and educational value.
+"""
 
 
 def _get_level_guidance(level: str) -> str:
     """Get level-specific guidance for Prolog programming."""
     guidance = {
         "beginner": """
-- Focus on basic facts and simple rules
-- Explain unification and backtracking clearly
-- Use simple, intuitive examples
-- Avoid complex cut operators and meta-predicates""",
+- Simple facts and basic rules
+- Clear variable names and simple unification
+- Avoid complex operators like cut (!)
+- Focus on basic list operations and recursion
+- Provide step-by-step reasoning explanations""",
 
         "intermediate": """
-- Include list processing and recursion patterns
-- Explain cut operator usage when appropriate
-- Show debugging techniques with trace/0
-- Demonstrate DCG (Definite Clause Grammar) basics""",
+- List processing and recursive patterns
+- Appropriate use of cut operator when needed
+- Debugging techniques and trace usage
+- Basic DCG (Definite Clause Grammar) concepts
+- Efficiency considerations and optimization""",
 
         "advanced": """
-- Utilize meta-predicates and higher-order programming
-- Implement constraint logic programming when relevant
-- Show optimization techniques and indexing considerations
-- Include module system and operator definitions"""
+- Meta-predicates and higher-order programming
+- Constraint logic programming techniques
+- Advanced optimization and indexing
+- Module system and operator definitions
+- Complex data structure manipulation"""
     }
     return guidance.get(level, guidance["beginner"])
+
+
+# Resources for additional information
+@mcp.resource("swish://container/info")
+async def get_container_info() -> str:
+    """Get current SWISH container information."""
+    try:
+        context = get_context()
+
+        if not context.container:
+            return "No SWISH container currently running"
+
+        return f"""SWISH Container Information:
+Name: {context.container_name}
+Status: {context.container.status if context.container else 'Not running'}
+URL: {context.swish_base_url}
+Data Directory: {context.data_dir}
+Ready: {context.container_ready}
+
+This container is automatically managed by the MCP server.
+"""
+    except Exception as e:
+        return f"Error getting container info: {e}"
+
+
+@mcp.resource("swish://files/list")
+async def get_files_list() -> str:
+    """Get list of available Prolog files as a resource."""
+    try:
+        context = get_context()
+        data_path = context.data_dir
+
+        if not data_path.exists():
+            return "No Prolog files directory found"
+
+        prolog_files = list(data_path.glob("*.pl"))
+
+        if not prolog_files:
+            return "No Prolog files found"
+
+        file_list = []
+        for file_path in sorted(prolog_files):
+            try:
+                stat = file_path.stat()
+                size = stat.st_size
+                file_list.append(f"{file_path.name} ({size} bytes)")
+            except Exception:
+                file_list.append(file_path.name)
+
+        return f"""Available Prolog Files:
+{chr(10).join(file_list)}
+
+Use load_knowledge_base() to load any of these files.
+"""
+    except Exception as e:
+        return f"Error listing files: {e}"
 
 
 # Main entry point
@@ -780,7 +862,7 @@ def main() -> None:
     try:
         logger.info("=" * 60)
         logger.info(f"Docker SWISH MCP Server v{__version__}")
-        logger.info("Starting server...")
+        logger.info("Prolog Integration Server")
         logger.info("=" * 60)
 
         # Run the MCP server

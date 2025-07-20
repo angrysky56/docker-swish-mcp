@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "docker-swish-mcp"
 dynamic = ["version"]
-description = "MCP server for managing Docker SWISH (SWI-Prolog for SHaring) containers and Prolog knowledge bases"
+description = "MCP server providing seamless Prolog integration with auto-managed SWISH container"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"

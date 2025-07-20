@@ -1,26 +1,26 @@
-# Docker SWISH MCP Server 🐳🧠
+# Docker SWISH MCP Server 🧠🐳
 
-A Model Context Protocol (MCP) server for managing Docker SWISH containers and interacting with SWI-Prolog knowledge bases. This server bridges the gap between AI assistants and logic programming, enabling deterministic reasoning and knowledge base management.
+A Model Context Protocol (MCP) server that provides seamless Prolog integration for Claude. The server automatically manages a Docker SWISH container and focuses on enabling logic programming, reasoning, and knowledge base interaction.
 
-## 🌟 Features
+## 🌟 Key Features
 
-### Container Management
-- **Start/Stop SWISH**: Launch Docker containers with configurable settings
-- **Status Monitoring**: Real-time container health and service status
-- **Configuration Management**: Set up authentication, HTTPS, and port mapping
-- **Log Access**: View container logs and debugging information
+### Automatic Container Management
+- **Auto-Start**: SWISH container starts automatically when MCP server initializes
+- **Auto-Stop**: Container stops gracefully when MCP server shuts down
+- **Zero Configuration**: No manual container management needed
+- **Transparent Operation**: Container lifecycle is completely handled behind the scenes
 
 ### Prolog Integration
-- **Query Execution**: Execute Prolog queries directly against SWISH
-- **Knowledge Base Management**: Create, edit, and organize .pl files
-- **File Operations**: List, read, and manage Prolog knowledge bases
-- **Real-time Interaction**: Interactive Prolog programming environment
+- **Direct Query Execution**: Execute Prolog queries directly from Claude
+- **Knowledge Base Management**: Create, load, and manage `.pl` files
+- **Logic Programming**: Full SWI-Prolog capabilities via SWISH interface
+- **Educational Support**: Built-in prompts for learning Prolog
 
-### AI-Assisted Development
-- **Programming Prompts**: Tailored assistance for Prolog development
-- **Logic Rule Creation**: Guided creation of domain-specific rules
-- **Debugging Support**: Systematic debugging prompts and techniques
-- **Knowledge Base Design**: Structured approach to KB architecture
+### AI-Assisted Logic Programming
+- **Programming Assistance**: Context-aware Prolog programming help
+- **Rule Creation**: Guided creation of domain-specific logic rules
+- **Best Practices**: Automated suggestions following Prolog conventions
+- **Debugging Support**: Systematic debugging techniques and patterns
 
 ## 🚀 Quick Start
 
@@ -29,74 +29,11 @@ A Model Context Protocol (MCP) server for managing Docker SWISH containers and i
 - Python 3.10+
 - `uv` package manager
 
-
-### Step 1: Add to Claude Desktop Configuration
-
-Add this to your Claude Desktop `config.json` file:
-
-```json
-{
-  "mcpServers": {
-    "docker-swish": {
-      "command": "docker",
-      "args": [
-        "run",
-        "--rm",
-        "-i",
-        "-v",
-        "./swish-data:/data",
-        "-p",
-        "3050:3050",
-        "swipl/swish"
-      ]
-    }
-  }
-}
-```
-# Permission issues
-
-If you encounter permission issues, ensure you have the correct permissions for the `/tmp/swish-data` directory.
-
-run
-```bash
-./setup.sh
-```
-### Step 2: That's It!
-
-The container automatically:
-- ✅ Handles permissions properly using `/tmp/swish-data`
-- ✅ Creates necessary directories
-- ✅ Runs SWISH on `http://localhost:3050`
-- ✅ Provides Prolog file management tools
-- ✅ Works for any user without manual setup
-
-## Example Usage
-
-```plaintext
-Claude: Let me create a knowledge base about photosynthesis and test some Prolog queries.
-
-# Creates photosynthesis.pl with facts and rules
-# Executes queries like: ?- what_do_we_know_about(photosynthesis, Facts).
-# Shows results in an organized format
-```
-
-## Available Tools
-
-Once configured, you get these MCP tools in Claude:
-
-- `start_swish_container()` - Start SWISH with custom options
-- `stop_swish_container()` - Stop the running container
-- `get_swish_status()` - Check container and service status
-- `execute_prolog_query(query)` - Run Prolog queries directly
-- `create_prolog_file(filename, content)` - Create `.pl` files
-- `list_prolog_files()` - Show all Prolog knowledge bases
-- `configure_swish_auth(mode)` - Set authentication options
-
 ### Installation
 
-1. **Clone or navigate to the project**:
+1. **Navigate to the project**:
    ```bash
-   cd /docker-swish-mcp
+   cd /home/ty/Repositories/ai_workspace/docker-swish-mcp
    ```
 
 2. **Set up Python environment**:
@@ -110,273 +47,289 @@ Once configured, you get these MCP tools in Claude:
    uv add -e .
    ```
 
-4. **Configure Claude Desktop**:
-   Add the contents of `example_mcp_config.json` to your Claude Desktop configuration:
+4. **Add to Claude Desktop Configuration**:
+   Copy the contents of `example_mcp_config.json` to your Claude Desktop config:
    ```bash
    # Linux/Mac
    nano ~/.config/claude-desktop/claude_desktop_config.json
-
-   # Or copy the example
-   cp example_mcp_config.json ~/.config/claude-desktop/
    ```
 
-5. **Restart Claude Desktop** to load the MCP server
+5. **Restart Claude Desktop** - The SWISH container will start automatically!
 
-## 🔧 Usage
+## 🧠 Usage
 
-### Container Management
+Once configured, you can immediately start using Prolog with Claude:
 
-**Start SWISH Container**:
+### Basic Prolog Queries
 ```
-Start a SWISH container on port 3050 with anonymous authentication
-```
-
-**Configure Authentication**:
-```
-Set up SWISH with 'social' authentication for Google/StackOverflow login
+Claude: Execute this Prolog query: member(X, [1,2,3,4,5]).
 ```
 
-**Check Status**:
+### Create Knowledge Bases
 ```
-Get current container status and SWISH accessibility
-```
-
-### Prolog Programming
-
-**Execute Queries**:
-```
-Run Prolog query: member(X, [1,2,3,4,5]).
+Claude: Create a family relationships knowledge base with facts about parents and rules for grandparents.
 ```
 
-**Create Knowledge Base**:
+### Logic Programming
 ```
-Create a family relationships knowledge base with facts and rules
-```
-
-**Debug Code**:
-```
-Help debug this Prolog predicate that's not working correctly
+Claude: Help me write Prolog rules to solve the Tower of Hanoi puzzle.
 ```
 
-### Knowledge Base Management
-
-**List Files**:
+### Load and Test Knowledge
 ```
-Show all Prolog files in the knowledge base
+Claude: Load the family knowledge base and test some relationship queries.
 ```
 
-**View Content**:
-```
-Show the content of family_relations.pl
-```
+## 🔧 Available Tools
 
-**Get Summary**:
-```
-Provide an overview of the current knowledge base
-```
+### Primary Prolog Tools
+- `execute_prolog_query(query)` - Execute Prolog queries directly
+- `create_prolog_file(filename, content)` - Create Prolog knowledge bases
+- `list_prolog_files()` - Browse available `.pl` files
+- `load_knowledge_base(filename)` - Consult/load Prolog files
+- `get_swish_status()` - Check Prolog environment status
 
-## 🛠️ Available Tools
+### AI Assistance Prompts
+- `prolog_programming_assistant()` - Tailored Prolog programming help
+- `logic_rule_creation()` - Domain-specific rule design guidance
 
-### Container Tools
-- `start_swish_container()` - Launch SWISH with custom configuration
-- `stop_swish_container()` - Stop and remove container
-- `get_swish_status()` - Container and service status
-- `configure_swish_auth()` - Authentication setup
+### Information Resources
+- `swish://container/info` - Container status information
+- `swish://files/list` - Available Prolog files listing
 
-### Prolog Tools
-- `execute_prolog_query()` - Run queries against SWISH
-- `create_prolog_file()` - Create new .pl knowledge files
-- `list_prolog_files()` - Browse available files
-
-### Resources
-- `swish://container/logs` - Container logs
-- `swish://files/{filename}` - Prolog file content
-- `swish://knowledge-base` - KB summary
-
-### AI Prompts
-- `prolog_programming_assistant()` - Tailored programming help
-- `logic_rule_creation()` - Domain-specific rule design
-- `debug_prolog_code()` - Systematic debugging assistance
-- `knowledge_base_design()` - Architecture guidance
-
-## 🏗️ Architecture
-
-### Docker SWISH Integration
-The server manages Docker containers running the official `swipl/swish` image, which provides:
-- Web-based SWI-Prolog environment
-- Interactive query interface
-- File management and persistence
-- Authentication and security options
-
-### MCP Protocol
-Built on FastMCP framework with:
-- Async/await patterns for Docker operations
-- Proper error handling and logging
-- Resource cleanup and signal handling
-- Type hints and comprehensive documentation
-
-### Data Management
-- **Data Directory**: `./swish-data/` (configurable)
-- **Prolog Files**: Stored in `data/` subdirectory
-- **Configuration**: Managed in `config-enabled/`
-- **Persistence**: Docker volumes for data retention
-
-## 🔒 Security Considerations
-
-### Authentication Modes
-- **Anonymous** (default): Sandboxed queries only
-- **Social**: Google/StackOverflow login
-- **Always**: Full authentication required
-
-### Container Security
-- Non-root user execution when possible
-- Data directory permissions management
-- Network isolation options
-- HTTPS support with self-signed certificates
-
-### Input Validation
-- Prolog query sanitization
-- File path validation
-- Docker parameter filtering
-- Error message sanitization
-
-## 🧪 Example Workflows
+## 💡 Example Workflows
 
 ### 1. Logic Programming Tutorial
-```bash
-# Start container
-start_swish_container(port=3050, auth_mode="anon")
-
-# Create learning materials
-create_prolog_file("tutorial", "
-% Basic facts
-likes(mary, food).
-likes(mary, wine).
-likes(john, wine).
-
-% Rules
-happy(X) :- likes(X, wine).
-")
-
-# Test queries
-execute_prolog_query("happy(X).")
-```
-
-### 2. Knowledge Base Development
-```bash
-# Design domain model
-knowledge_base_design("Family relationships and genealogy",
-                     "Query ancestors, descendants, relationships")
-
-# Create structured KB
-create_prolog_file("family", "
-% Facts
+```prolog
+% Claude can help create this knowledge base
+% Facts about family relationships
 parent(tom, bob).
 parent(bob, ann).
 parent(bob, pat).
+parent(ann, jim).
 
-% Rules
+% Rules for family relationships
 grandparent(X, Z) :- parent(X, Y), parent(Y, Z).
 ancestor(X, Z) :- parent(X, Z).
 ancestor(X, Z) :- parent(X, Y), ancestor(Y, Z).
-")
 
-# Test reasoning
-execute_prolog_query("ancestor(tom, ann).")
+% Query examples:
+% ?- grandparent(tom, ann).
+% ?- ancestor(tom, jim).
+% ?- findall(X, ancestor(tom, X), Descendants).
 ```
 
-### 3. Deterministic Agent Logic
-```bash
-# Create agent rules (from Prolog agent documentation)
-create_prolog_file("agent_rules", "
-% Agent capabilities
+### 2. Problem Solving with Logic
+```prolog
+% Example: Solving logic puzzles
+% Houses puzzle with colors, pets, and nationalities
+
+house(red, british, dog).
+house(green, irish, cat).
+house(blue, german, fish).
+
+next_to(house(red,_,_), house(blue,_,_)).
+lives_with(Person, Pet) :- house(_, Person, Pet).
+
+% Query: Who lives with what pet?
+% ?- lives_with(Person, Pet).
+```
+
+### 3. Deterministic Agent Rules
+```prolog
+% Agent capability rules (inspired by the Prolog agent guide)
 can_execute(shell_command).
 can_execute(file_io).
 can_write(python).
 
-% Task authorization rules
+% Task authorization logic
 can_perform_task(create_file(Name, Content)) :-
     can_execute(file_io),
     is_valid_filename(Name),
     is_safe_content(Content).
-")
 
-# Test agent logic
-execute_prolog_query("can_perform_task(create_file('app.py', 'print(hello)')).")
+is_valid_filename(Name) :- 
+    atom_string(Name, NameStr),
+    \+ sub_string(NameStr, _, _, _, '..').
+
+is_safe_content(Content) :-
+    atom_string(Content, ContentStr),
+    \+ sub_string(ContentStr, _, _, _, 'rm -rf').
 ```
 
-## 📝 Development
+## 🏗️ Architecture
+
+### Automatic Container Management
+- **Lifecycle Integration**: Container starts/stops with MCP server lifecycle
+- **Health Monitoring**: Automatic readiness checking and health verification
+- **Data Persistence**: Volume mounting for persistent knowledge bases
+- **Error Recovery**: Graceful handling of Docker issues and container failures
+
+### Prolog Environment
+- **SWI-Prolog**: Full SWI-Prolog implementation via SWISH
+- **Web Interface**: Browser-accessible at `http://localhost:3050` (when running)
+- **Knowledge Persistence**: `.pl` files stored in `./swish-data/data/`
+- **Safe Execution**: Anonymous mode for secure query execution
+
+### MCP Integration
+- **FastMCP Framework**: Built on the modern FastMCP framework
+- **Async Operations**: Non-blocking query execution and file operations
+- **Error Handling**: Comprehensive error handling with meaningful messages
+- **Logging**: Proper stderr logging for MCP compatibility
+
+## 🔒 Security & Safety
+
+### Container Security
+- **Anonymous Mode**: SWISH runs in anonymous mode (sandboxed queries)
+- **Volume Isolation**: Data directory properly isolated
+- **Network Isolation**: Container only exposes necessary ports
+- **Resource Limits**: Automatic resource management and cleanup
+
+### Query Safety
+- **Input Validation**: Prolog query sanitization and validation
+- **Timeout Controls**: Configurable timeouts for query execution
+- **Error Isolation**: Query errors don't affect container stability
+
+## 📖 Configuration
+
+### Example MCP Configuration
+```json
+{
+  "mcpServers": {
+    "docker-swish": {
+      "command": "uv",
+      "args": [
+        "--directory",
+        "/home/ty/Repositories/ai_workspace/docker-swish-mcp",
+        "run",
+        "python",
+        "-m",
+        "docker_swish_mcp.main"
+      ],
+      "env": {
+        "LOG_LEVEL": "INFO"
+      }
+    }
+  }
+}
+```
+
+### Customization Options
+- **Port Configuration**: Default port 3050 (configurable)
+- **Data Directory**: `./swish-data/` (persistent across restarts)
+- **Container Name**: `swish-mcp-auto` (auto-managed)
+- **Timeout Settings**: Configurable query timeouts
+
+## 🛠️ Development
 
 ### Project Structure
 ```
 docker-swish-mcp/
 ├── src/docker_swish_mcp/
-│   ├── __init__.py          # Package initialization
-│   └── main.py              # MCP server implementation
+│   ├── __init__.py
+│   ├── main.py              # Main MCP server implementation
+│   └── __about__.py         # Version info
 ├── pyproject.toml           # Package configuration
 ├── example_mcp_config.json  # Claude Desktop config
-└── README.md               # This file
+├── README.md               # This file
+└── swish-data/             # Data directory (auto-created)
+    └── data/               # Prolog files location
 ```
 
 ### Contributing
-1. Follow MCP development guidelines
+1. Follow MCP development best practices
 2. Use `uv` for dependency management
-3. Add type hints and docstrings
-4. Test with real SWISH containers
-5. Log to stderr for MCP compatibility
+3. Add type hints and comprehensive docstrings
+4. Test with real Prolog use cases
+5. Ensure stderr logging for MCP compatibility
 
 ### Testing
 ```bash
-# Start development server
+# Test the server
 uv run python -m docker_swish_mcp.main
 
 # Test with MCP Inspector
 mcp dev src/docker_swish_mcp/main.py
 ```
 
-## 🔗 Related Projects
+## 🔗 Related Resources
 
-- [Docker SWISH](https://github.com/SWI-Prolog/docker-swish) - Base Docker image
-- [SWI-Prolog](https://www.swi-prolog.org/) - Prolog implementation
-- [Model Context Protocol](https://modelcontextprotocol.io/) - MCP specification
-- [FastMCP](https://github.com/modelcontextprotocol/python-sdk) - Python MCP framework
+- [SWI-Prolog Documentation](https://www.swi-prolog.org/pldoc/doc_for?object=manual)
+- [SWISH Tutorial](https://swish.swi-prolog.org/example/tutorial.swinb)
+- [Model Context Protocol](https://modelcontextprotocol.io/)
+- [Logic Programming Guide](https://www.learnprolognow.org/)
+
+## ✨ What Makes This Different
+
+### Traditional Approach Problems:
+- Manual container start/stop commands
+- Complex setup and configuration
+- Container management mixed with logic programming
+- Unclear separation of concerns
+
+### This Solution:
+- **Zero Manual Container Management**: Everything automatic
+- **Prolog-Focused**: Tools designed for logic programming tasks
+- **Seamless Integration**: Container lifecycle handled transparently
+- **Educational Support**: Built-in learning assistance for Prolog
+
+### Perfect For:
+- **Logic Programming**: Rules, facts, reasoning, constraint solving
+- **Educational Use**: Learning Prolog with AI assistance
+- **Knowledge Bases**: Structured information and inference
+- **Deterministic Agents**: Rule-based decision systems (as described in the Prolog agent guide)
 
 ## 📄 License
 
 MIT License - see LICENSE file for details.
 
-## Troubleshooting
+## 🆘 Troubleshooting
 
-### Container Issues
-- **Port conflict**: Change `-p 3050:3050` to `-p 3051:3050`
-- **Permission denied**: The setup uses `/tmp/swish-data` to avoid permission issues
-- **Container exists**: Stop with `docker stop swish-mcp` or use `--rm` flag
+### Common Issues
 
-### Data Persistence
-- Files stored in `/tmp/swish-data` (temporary by design)
-- For permanent storage, change volume to `$HOME/swish-data:/data`
-- The container handles permissions automatically
+1. **Docker not available**:
+   - Ensure Docker Desktop is running
+   - Check Docker permissions: `docker ps`
+   - Verify user is in docker group (Linux)
 
-## Why This Works
+2. **Container won't start**:
+   - Check port 3050 is available: `lsof -i :3050`
+   - Ensure sufficient disk space
+   - Check Docker logs: `docker logs swish-mcp-auto`
 
-**Traditional Problem**: Docker volume permissions require manual `chown` commands
+3. **Prolog queries timeout**:
+   - Check SWISH container is responsive
+   - Use `get_swish_status()` to verify readiness
+   - Restart MCP server if needed
 
-**This Solution**:
-- Uses `/tmp` directory (world-writable by default)
-- SWISH container creates proper directory structure
-- No manual permission fixes needed
-- Works across different host systems
+4. **Permission errors**:
+   - Ensure data directory is writable
+   - Check Docker volume permissions
+   - Verify file ownership in `./swish-data/`
 
-## Development
-
-To build and test locally:
-
+### Debug Commands
 ```bash
-# Build the image
-docker build -t docker-swish-mcp .
+# Check container status
+docker ps | grep swish
 
-# Test the configuration
-# Use the config above in Claude Desktop
+# View container logs
+docker logs swish-mcp-auto
+
+# Test SWISH directly
+curl http://localhost:3050/
+
+# Check MCP server logs
+# (logs appear in Claude Desktop or terminal when running directly)
 ```
 
-For more help, check container logs with `get_swish_status()` or examine Docker logs directly.
+## 🎯 Success Stories
+
+This MCP server enables:
+- **Rapid Prototyping**: Quick logic rule development and testing
+- **Educational Support**: Learning Prolog with AI guidance
+- **Knowledge Engineering**: Building and testing knowledge bases
+- **Deterministic AI**: Creating rule-based, predictable agent behavior
+
+---
+
+**Ready to start logic programming with Claude? Install and begin reasoning!** 🧠✨
