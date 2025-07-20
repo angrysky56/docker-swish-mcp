@@ -11,7 +11,6 @@ from __future__ import annotations
 import asyncio
 import atexit
 import logging
-import os
 import signal
 import sys
 from collections.abc import AsyncIterator
@@ -20,7 +19,16 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from mcp.server.fastmcp import FastMCP, Context
+import aiohttp
+from mcp.server.fastmcp import FastMCP
+
+# Try to import docker, but don't fail if not available
+try:
+    import docker
+    DOCKER_AVAILABLE = True
+except ImportError:
+    docker = None
+    DOCKER_AVAILABLE = False
 
 # Configure logging to stderr for MCP servers
 logging.basicConfig(
@@ -74,8 +82,7 @@ def cleanup_processes() -> None:
             logger.debug(f"Container cleanup: {e}")
             # Try to force remove if graceful stop failed
             try:
-                if global_swish_context.docker_available:
-                    import docker
+                if global_swish_context.docker_available and docker:
                     client = docker.from_env()
                     container = client.containers.get(global_swish_context.container_name)
                     container.remove(force=True)
@@ -120,7 +127,6 @@ async def start_swish_container(context: SwishContext) -> bool:
             if existing.status == "running":
                 # Check if it's responsive
                 try:
-                    import aiohttp
                     async with aiohttp.ClientSession() as session:
                         async with session.get(
                             f"{context.swish_base_url}/",
@@ -196,7 +202,7 @@ async def start_swish_container(context: SwishContext) -> bool:
 
         # Wait for container to be ready
         max_wait = 30
-        for i in range(max_wait):
+        for _ in range(max_wait):
             try:
                 # Refresh container status
                 container.reload()
@@ -208,7 +214,6 @@ async def start_swish_container(context: SwishContext) -> bool:
                     return False
 
                 # Check if SWISH is responding
-                import aiohttp
                 async with aiohttp.ClientSession() as session:
                     async with session.get(
                         f"{context.swish_base_url}/",
@@ -248,17 +253,20 @@ async def app_lifespan(server: FastMCP) -> AsyncIterator[SwishContext]:
     logger.info(f"Initializing Docker SWISH MCP Server v{__version__}")
 
     try:
-        # Try to import and initialize Docker
-        import docker
-
-        try:
-            docker_client = docker.from_env()
-            # Test Docker connection
-            docker_client.ping()
-            docker_available = True
-            logger.info("✅ Docker client initialized successfully")
-        except Exception as e:
-            logger.warning(f"⚠️ Docker not available: {e}")
+        # Initialize Docker if available
+        if DOCKER_AVAILABLE and docker:
+            try:
+                docker_client = docker.from_env()
+                # Test Docker connection
+                docker_client.ping()
+                docker_available = True
+                logger.info("✅ Docker client initialized successfully")
+            except Exception as e:
+                logger.warning(f"⚠️ Docker not available: {e}")
+                docker_client = None
+                docker_available = False
+        else:
+            logger.warning("⚠️ Docker not available")
             docker_client = None
             docker_available = False
 
@@ -373,63 +381,185 @@ async def execute_prolog_query(
         if not clean_query.endswith('.'):
             clean_query = clean_query + '.'
 
-        # Execute query via SWISH API
-        import aiohttp
+        # Execute query via SWISH Pengine API or direct execution fallback
+        import asyncio as asyncio_mod
 
+        # First try the web API
         async with aiohttp.ClientSession() as session:
-            url = f"{context.swish_base_url}/ask"
-
-            payload = {
-                "q": clean_query,
-                "template": "json-s",
-                "chunk": 1
+            # Step 1: Create a pengine session
+            create_url = f"{context.swish_base_url}/pengine/create"
+            create_payload = {
+                "format": "json"
             }
 
             try:
+                # Create pengine
                 async with session.post(
-                    url,
-                    json=payload,
-                    timeout=aiohttp.ClientTimeout(total=timeout)
-                ) as response:
+                    create_url,
+                    json=create_payload,
+                    timeout=aiohttp.ClientTimeout(total=5)  # Short timeout for web API
+                ) as create_response:
 
-                    if response.status != 200:
-                        return f"❌ SWISH API error: {response.status}"
+                    if create_response.status == 200:
+                        create_result = await create_response.json()
 
-                    result = await response.json()
+                        if "id" in create_result:
+                            pengine_id = create_result["id"]
 
-                    # Format results
-                    if "bindings" in result and result["bindings"]:
-                        formatted_results = []
-                        for binding in result["bindings"]:
-                            if isinstance(binding, dict):
-                                # Format variable bindings nicely
-                                binding_str = ", ".join(f"{k} = {v}" for k, v in binding.items())
-                                formatted_results.append(binding_str)
-                            else:
-                                formatted_results.append(str(binding))
+                            # Step 2: Query the pengine
+                            query_url = f"{context.swish_base_url}/pengine/ask"
+                            query_payload = {
+                                "id": pengine_id,
+                                "query": clean_query,
+                                "template": "Bindings",
+                                "chunk": 1
+                            }
 
-                        return f"""✅ Query: {clean_query}
+                            async with session.post(
+                                query_url,
+                                json=query_payload,
+                                timeout=aiohttp.ClientTimeout(total=timeout)
+                            ) as query_response:
+
+                                if query_response.status == 200:
+                                    result = await query_response.json()
+
+                                    # Step 3: Process results and destroy pengine
+                                    try:
+                                        destroy_url = f"{context.swish_base_url}/pengine/destroy"
+                                        await session.post(destroy_url, json={"id": pengine_id})
+                                    except Exception:
+                                        pass  # Don't fail if cleanup fails
+
+                                    # Format results based on pengine response format
+                                    if result.get("event") == "success":
+                                        data = result.get("data", [])
+                                        more = result.get("more", False)
+
+                                        if data:
+                                            formatted_results = []
+                                            for binding_set in data:
+                                                if isinstance(binding_set, dict):
+                                                    if binding_set:  # Non-empty bindings
+                                                        binding_str = ", ".join(f"{k} = {v}" for k, v in binding_set.items())
+                                                        formatted_results.append(binding_str)
+                                                    else:  # Empty dict means query succeeded with no variables
+                                                        formatted_results.append("true")
+                                                else:
+                                                    formatted_results.append(str(binding_set))
+
+                                            return f"""✅ Query: {clean_query}
 📋 Results:
 {chr(10).join(f"  • {result}" for result in formatted_results)}
 
-💡 Total solutions: {len(formatted_results)}"""
+💡 Total solutions: {len(formatted_results)}{' (more available)' if more else ''}"""
 
-                    elif "error" in result:
-                        return f"❌ Prolog Error: {result['error']}"
+                                        else:
+                                            return f"✅ Query: {clean_query}\n📋 Result: true (query succeeded)"
 
-                    elif result.get("success") is True:
-                        return f"✅ Query: {clean_query}\n📋 Result: true (query succeeded)"
+                                    elif result.get("event") == "failure":
+                                        return f"❌ Query: {clean_query}\n📋 Result: false (no solutions found)"
 
-                    elif result.get("success") is False:
-                        return f"❌ Query: {clean_query}\n📋 Result: false (query failed)"
+                                    elif result.get("event") == "error":
+                                        error_data = result.get("data", result.get("error", "Unknown error"))
+                                        return f"❌ Prolog Error in query '{clean_query}': {error_data}"
 
-                    else:
-                        return f"✅ Query: {clean_query}\n📋 Result: {result}"
+                                    else:
+                                        return f"✅ Query: {clean_query}\n📋 Result: {result}"
 
-            except asyncio.TimeoutError:
-                return f"⏱️ Query timed out after {timeout} seconds"
-            except aiohttp.ClientError as e:
-                return f"❌ Connection error: {e}"
+            except Exception as web_error:
+                logger.debug(f"Web API failed, trying direct execution: {web_error}")
+
+        # Fallback to direct container execution if web API fails
+        logger.info("Using direct container execution as fallback for Prolog query")
+
+        try:
+            # Build the command to execute in the container
+            # We'll use a special format to capture both variable bindings and simple success/failure
+
+            # For queries with variables, we need to format output specially
+            if any(c.isupper() for c in clean_query):  # Has variables
+                prolog_cmd = f"""
+                (   {clean_query[:-1]},
+                    term_variables({clean_query[:-1]}, Vars),
+                    copy_term({clean_query[:-1]}, Term),
+                    numbervars(Term, 0, _),
+                    writeq(solution(Term)), nl,
+                    fail
+                ;   write('no_more_solutions'), nl
+                ), halt.
+                """
+            else:  # No variables, just test success/failure
+                prolog_cmd = f"""
+                (   {clean_query[:-1]} ->
+                    write('success'), nl
+                ;   write('failure'), nl
+                ), halt.
+                """
+
+            # Execute the command in the container
+            cmd = [
+                "docker", "exec", context.container_name,
+                "swipl", "-g", prolog_cmd, "-t", "halt"
+            ]
+
+            # Run the command asynchronously
+            process = await asyncio_mod.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio_mod.subprocess.PIPE,
+                stderr=asyncio_mod.subprocess.PIPE
+            )
+
+            stdout, stderr = await asyncio_mod.wait_for(
+                process.communicate(), timeout=timeout
+            )
+
+            # Process the output
+            output = stdout.decode('utf-8').strip()
+            error_output = stderr.decode('utf-8').strip()
+
+            if process.returncode != 0:
+                if error_output:
+                    return f"❌ Prolog Error in query '{clean_query}': {error_output}"
+                else:
+                    return f"❌ Query execution failed: {clean_query}"
+
+            if not output:
+                return f"❌ Query: {clean_query}\n📋 Result: No output (query may have failed)"
+
+            # Parse the results
+            lines = output.split('\n')
+            results = []
+
+            for line in lines:
+                line = line.strip()
+                if line == 'no_more_solutions':
+                    break
+                elif line == 'success':
+                    return f"✅ Query: {clean_query}\n📋 Result: true (query succeeded)"
+                elif line == 'failure':
+                    return f"❌ Query: {clean_query}\n📋 Result: false (no solutions found)"
+                elif line.startswith('solution('):
+                    # Extract the solution
+                    solution = line[9:-1]  # Remove 'solution(' and ')'
+                    results.append(solution)
+                elif line and line != 'no_more_solutions':
+                    results.append(line)
+
+            if results:
+                return f"""✅ Query: {clean_query}
+📋 Results:
+{chr(10).join(f"  • {result}" for result in results)}
+
+💡 Total solutions: {len(results)} (direct execution)"""
+            else:
+                return f"✅ Query: {clean_query}\n📋 Result: Query completed successfully (direct execution)"
+
+        except asyncio_mod.TimeoutError:
+            return f"⏱️ Query timed out after {timeout} seconds"
+        except Exception as e:
+            logger.error(f"Direct execution failed: {e}")
+            return f"❌ Failed to execute query via both web API and direct execution: {e}"
 
     except Exception as e:
         logger.error(f"Failed to execute Prolog query: {e}")
@@ -587,7 +717,6 @@ Check Docker status and restart the MCP server."""
             # Check SWISH accessibility
             swish_accessible = False
             try:
-                import aiohttp
                 async with aiohttp.ClientSession() as session:
                     async with session.get(
                         f"{context.swish_base_url}/",
