@@ -1,8 +1,48 @@
 # Docker SWISH MCP Server 🧠🐳
 
+## 🚨 **NEW: Enhanced Tools - Solving UX Issues** 🚨
+
+**If you thought the tools were broken - they're not! They just work differently than web SWISH.**
+
+### 🎯 **The Problem You Experienced**
+```bash
+# This seemed broken but wasn't:
+?- process(photosynthesis).  
+# ERROR: Unknown procedure
+
+# You expected web-SWISH behavior, but got Docker-SWISH architecture
+```
+
+### ✅ **The Solution: Enhanced Notebook Tools**
+```python
+# This actually works (and persists!):
+create_notebook_with_background_cells()
+# Result: Knowledge that persists across all queries! 🎉
+```
+
+**Quick Demo**: 
+```bash
+cd /home/ty/Repositories/ai_workspace/docker-swish-mcp
+python enhanced_tools/demo.py
+```
+
+## 📚 **Essential Reading** (Start Here!)
+
+- 🚀 **[QUICK_START_DEMO.md](QUICK_START_DEMO.md)** - See working examples immediately
+- 📖 **[ENHANCED_USAGE_GUIDE.md](ENHANCED_USAGE_GUIDE.md)** - Complete guide to persistent notebooks
+- 🛠️ **[enhanced_tools/](enhanced_tools/)** - Enhanced MCP tools with notebook support
+
+---
+
 A Model Context Protocol (MCP) server that provides seamless Prolog integration for Claude. The server automatically manages a Docker SWISH container and focuses on enabling logic programming, reasoning, and knowledge base interaction.
 
 ## 🌟 Key Features
+
+### 🆕 Enhanced Notebook System (NEW!)
+- **Persistent State**: Background cells maintain knowledge across queries (solves the "vanishing knowledge" problem)
+- **Rich Interface**: Markdown, HTML, Program, and Query cells for complete interactive experience
+- **ASEKE Integration**: Pre-built cognitive architecture notebooks with emotional states and knowledge gaps
+- **Web Interface**: Full SWISH web interface at `http://localhost:3050` with enhanced notebooks
 
 ### Automatic Container Management
 - **Auto-Start**: SWISH container starts automatically when MCP server initializes
@@ -11,16 +51,10 @@ A Model Context Protocol (MCP) server that provides seamless Prolog integration 
 - **Transparent Operation**: Container lifecycle is completely handled behind the scenes
 
 ### Prolog Integration
-- **Direct Query Execution**: Execute Prolog queries directly from Claude
-- **Knowledge Base Management**: Create, load, and manage `.pl` files
-- **Logic Programming**: Full SWI-Prolog capabilities via SWISH interface
-- **Educational Support**: Built-in prompts for learning Prolog
-
-### AI-Assisted Logic Programming
-- **Programming Assistance**: Context-aware Prolog programming help
-- **Rule Creation**: Guided creation of domain-specific logic rules
-- **Best Practices**: Automated suggestions following Prolog conventions
-- **Debugging Support**: Systematic debugging techniques and patterns
+- **Enhanced Query Execution**: Execute Prolog queries with persistent state via notebooks
+- **Knowledge Base Management**: Create persistent `.swinb` notebooks (not just `.pl` files)
+- **Logic Programming**: Full SWI-Prolog capabilities via SWISH interface with enhanced UX
+- **Educational Support**: Built-in tutorials and examples for learning Prolog
 
 ## 🚀 Quick Start
 
@@ -56,228 +90,204 @@ A Model Context Protocol (MCP) server that provides seamless Prolog integration 
 
 5. **Restart Claude Desktop** - The SWISH container will start automatically!
 
-## 🧠 Usage
+6. **🆕 Try Enhanced Tools** (Recommended!):
+   ```bash
+   python enhanced_tools/demo.py
+   ```
 
-Once configured, you can immediately start using Prolog with Claude:
+## 🆕 Enhanced Usage (Solves UX Issues!)
 
-### Basic Prolog Queries
-```
-Claude: Execute this Prolog query: member(X, [1,2,3,4,5]).
-```
+### Problem: "Knowledge Keeps Vanishing!"
 
-### Create Knowledge Bases
-```
-Claude: Create a family relationships knowledge base with facts about parents and rules for grandparents.
-```
-
-### Logic Programming
-```
-Claude: Help me write Prolog rules to solve the Tower of Hanoi puzzle.
+**❌ Old Way (Seemed Broken)**:
+```python
+# This doesn't work in Docker-SWISH:
+docker-swish:execute_prolog_query("assertz(fact(a)).")  # ✅ Success
+docker-swish:execute_prolog_query("fact(X).")           # ❌ Unknown procedure!?
 ```
 
-### Load and Test Knowledge
+**✅ New Way (Actually Works)**:
+```python
+from enhanced_tools.enhanced_swish_tools import EnhancedSWISHTools
+
+tools = EnhancedSWISHTools()
+
+# Create notebook with persistent background knowledge
+result = tools.create_notebook(
+    name="my_lab",
+    background_knowledge=["fact(a).", "rule(X) :- fact(X)."],
+    initial_query="fact(X)."
+)
+
+# Access via web interface: http://localhost:3050/?code=/data/notebooks/my_lab.swinb
+# Knowledge persists forever! 🎉
 ```
-Claude: Load the family knowledge base and test some relationship queries.
+
+### ASEKE Cognitive Architecture Made Easy
+
+```python
+# One command creates full cognitive architecture lab
+tools.create_aseke_cognitive_notebook()
+
+# Includes persistent:
+# - Emotional states (Plutchik's emotions)  
+# - Knowledge gaps and curiosity loops
+# - Meta-cognitive monitoring
+# - Interactive exploration capabilities
+```
+
+## 🔍 **Why the Original Tools Seemed "Broken"**
+
+### Docker-SWISH vs Web-SWISH Architecture
+
+| Feature | Docker-SWISH (This System) | Web-SWISH (swish.swi-prolog.org) |
+|---------|---------------------------|----------------------------------|
+| **Execution Model** | Pengine isolation per query | Session-based persistence |
+| **State Management** | Background cells for persistence | Direct session state |
+| **File System** | Container `/data` directory | Browser-based |
+| **MCP Integration** | ✅ Full integration | ❌ Not available |
+| **Persistence** | Notebook background cells | Session cookies |
+
+### The Architecture Difference
+
+**Docker-SWISH** (this system):
+- Each MCP query creates isolated pengine
+- Knowledge doesn't persist between separate queries  
+- **Solution**: Use notebook background cells for persistence
+
+**Web-SWISH** (public server):
+- Browser session maintains state
+- Knowledge persists within browser session
+- Limited by public server constraints
+
+## 💡 **Enhanced Tools Features**
+
+### 1. Persistent Notebooks (.swinb files)
+- **Background Cells**: Knowledge persists across all queries
+- **Query Cells**: Interactive exploration with persistent state
+- **Markdown Cells**: Rich documentation and tutorials
+- **HTML Cells**: Custom interactive interfaces with JavaScript
+
+### 2. ASEKE Cognitive Architecture Support
+- Pre-built emotional state algorithms (Plutchik's emotions)
+- Knowledge gap detection and curiosity loops
+- Meta-cognitive monitoring capabilities
+- Interactive exploration of cognitive processes
+
+### 3. Enhanced MCP Tools
+```python
+# Create persistent knowledge laboratory
+create_notebook(name, background_knowledge, initial_query)
+
+# Add knowledge that persists
+add_background_cell(notebook_name, knowledge)
+
+# List all notebooks  
+list_notebooks()
+
+# Create specialized ASEKE lab
+create_aseke_cognitive_notebook()
+```
+
+### 4. Web Interface Integration
+- Rich syntax highlighting and auto-completion
+- Interactive query execution with persistent results
+- Export capabilities (CSV, JSON, notebooks)
+- Collaborative sharing and version control
+
+## 🧠 Usage Workflows
+
+### Traditional Prolog Programming
+```python
+# 1. Create program notebook
+tools.create_notebook("family_tree", 
+                     background_knowledge=["parent(tom, bob).", "parent(bob, ann)."])
+
+# 2. Access web interface for interactive development
+# 3. Add rules incrementally to background cells  
+# 4. Test with query cells that have persistent access to all knowledge
+```
+
+### ASEKE Cognitive Architecture Research
+```python
+# 1. Create ASEKE lab
+tools.create_aseke_cognitive_notebook()
+
+# 2. Explore emotional states and knowledge gaps interactively
+# 3. Add domain-specific knowledge to background cells
+# 4. Test curiosity loops and meta-cognitive processes
+# 5. Export insights and discoveries
+```
+
+### Educational Tutorials
+```python
+# 1. Create tutorial notebook with progressive examples
+# 2. Students interact with query cells
+# 3. Background cells provide consistent knowledge base
+# 4. Rich markdown documentation guides learning
 ```
 
 ## 🔧 Available Tools
 
-### Primary Prolog Tools
-- `execute_prolog_query(query)` - Execute Prolog queries directly
-- `create_prolog_file(filename, content)` - Create Prolog knowledge bases
-- `list_prolog_files()` - Browse available `.pl` files
-- `load_knowledge_base(filename)` - Consult/load Prolog files
-- `get_swish_status()` - Check Prolog environment status
+### Enhanced MCP Tools (NEW!)
+- `create_notebook(name, title, background_knowledge, initial_query)` - Create persistent notebook
+- `add_background_cell(notebook_name, knowledge)` - Add persistent knowledge
+- `list_notebooks()` - Browse available notebooks  
+- `create_aseke_cognitive_notebook()` - Specialized cognitive architecture lab
 
-### AI Assistance Prompts
-- `prolog_programming_assistant()` - Tailored Prolog programming help
-- `logic_rule_creation()` - Domain-specific rule design guidance
+### Original MCP Tools  
+- `execute_prolog_query(query)` - Execute single Prolog queries (limited persistence)
+- `create_prolog_file(filename, content)` - Create `.pl` files (for basic scripts)
+- `list_prolog_files()` - Browse `.pl` files
+- `load_knowledge_base(filename)` - Load `.pl` files (session-limited)
+- `get_swish_status()` - Check system status
 
 ### Information Resources
 - `swish://container/info` - Container status information
-- `swish://files/list` - Available Prolog files listing
+- `swish://files/list` - Available files listing
 
-## 💡 Example Workflows
+## 🎯 **Solving Your Original Issues**
 
-### 1. Logic Programming Tutorial
-```prolog
-% Claude can help create this knowledge base
-% Facts about family relationships
-parent(tom, bob).
-parent(bob, ann).
-parent(bob, pat).
-parent(ann, jim).
+### ✅ "Notepad that doesn't vanish"
+**Solution**: Notebook background cells provide persistent knowledge across all sessions
 
-% Rules for family relationships
-grandparent(X, Z) :- parent(X, Y), parent(Y, Z).
-ancestor(X, Z) :- parent(X, Z).
-ancestor(X, Z) :- parent(X, Y), ancestor(Y, Z).
+### ✅ "Not awkward to use"  
+**Solution**: Rich web interface with familiar notebook paradigm (like Jupyter)
 
-% Query examples:
-% ?- grandparent(tom, ann).
-% ?- ancestor(tom, jim).
-% ?- findall(X, ancestor(tom, X), Descendants).
-```
+### ✅ "Better instructions"
+**Solution**: Enhanced documentation with clear Docker-SWISH vs Web-SWISH explanations
 
-### 2. Problem Solving with Logic
-```prolog
-% Example: Solving logic puzzles
-% Houses puzzle with colors, pets, and nationalities
+### ✅ "Access and modify, run and re-run"
+**Solution**: Full web interface with persistent editing and interactive execution
 
-house(red, british, dog).
-house(green, irish, cat).
-house(blue, german, fish).
+## 📊 **Success Metrics**
 
-next_to(house(red,_,_), house(blue,_,_)).
-lives_with(Person, Pet) :- house(_, Person, Pet).
+After using enhanced tools, you should experience:
+- ✅ Knowledge persists across query sessions
+- ✅ Intuitive notebook-based interface  
+- ✅ Clear understanding of system behavior
+- ✅ Rich interactive development environment
+- ✅ Seamless integration with cognitive architectures
 
-% Query: Who lives with what pet?
-% ?- lives_with(Person, Pet).
-```
+## 🛠️ **Development and Extension**
 
-### 3. Deterministic Agent Rules
-```prolog
-% Agent capability rules (inspired by the Prolog agent guide)
-can_execute(shell_command).
-can_execute(file_io).
-can_write(python).
-
-% Task authorization logic
-can_perform_task(create_file(Name, Content)) :-
-    can_execute(file_io),
-    is_valid_filename(Name),
-    is_safe_content(Content).
-
-is_valid_filename(Name) :- 
-    atom_string(Name, NameStr),
-    \+ sub_string(NameStr, _, _, _, '..').
-
-is_safe_content(Content) :-
-    atom_string(Content, ContentStr),
-    \+ sub_string(ContentStr, _, _, _, 'rm -rf').
-```
-
-## 🏗️ Architecture
-
-### Automatic Container Management
-- **Lifecycle Integration**: Container starts/stops with MCP server lifecycle
-- **Health Monitoring**: Automatic readiness checking and health verification
-- **Data Persistence**: Volume mounting for persistent knowledge bases
-- **Error Recovery**: Graceful handling of Docker issues and container failures
-
-### Prolog Environment
-- **SWI-Prolog**: Full SWI-Prolog implementation via SWISH
-- **Web Interface**: Browser-accessible at `http://localhost:3050` (when running)
-- **Knowledge Persistence**: `.pl` files stored in `./swish-data/data/`
-- **Safe Execution**: Anonymous mode for secure query execution
-
-### MCP Integration
-- **FastMCP Framework**: Built on the modern FastMCP framework
-- **Async Operations**: Non-blocking query execution and file operations
-- **Error Handling**: Comprehensive error handling with meaningful messages
-- **Logging**: Proper stderr logging for MCP compatibility
-
-## 🔒 Security & Safety
-
-### Container Security
-- **Anonymous Mode**: SWISH runs in anonymous mode (sandboxed queries)
-- **Volume Isolation**: Data directory properly isolated
-- **Network Isolation**: Container only exposes necessary ports
-- **Resource Limits**: Automatic resource management and cleanup
-
-### Query Safety
-- **Input Validation**: Prolog query sanitization and validation
-- **Timeout Controls**: Configurable timeouts for query execution
-- **Error Isolation**: Query errors don't affect container stability
-
-## 📖 Configuration
-
-### Example MCP Configuration
-```json
-{
-  "mcpServers": {
-    "docker-swish": {
-      "command": "uv",
-      "args": [
-        "--directory",
-        "/home/ty/Repositories/ai_workspace/docker-swish-mcp",
-        "run",
-        "python",
-        "-m",
-        "docker_swish_mcp.main"
-      ],
-      "env": {
-        "LOG_LEVEL": "INFO"
-      }
-    }
-  }
-}
-```
-
-### Customization Options
-- **Port Configuration**: Default port 3050 (configurable)
-- **Data Directory**: `./swish-data/` (persistent across restarts)
-- **Container Name**: `swish-mcp-auto` (auto-managed)
-- **Timeout Settings**: Configurable query timeouts
-
-## 🛠️ Development
-
-### Project Structure
+### File Structure
 ```
 docker-swish-mcp/
-├── src/docker_swish_mcp/
-│   ├── __init__.py
-│   ├── main.py              # Main MCP server implementation
-│   └── __about__.py         # Version info
-├── pyproject.toml           # Package configuration
-├── example_mcp_config.json  # Claude Desktop config
-├── README.md               # This file
-└── swish-data/             # Data directory (auto-created)
-    └── data/               # Prolog files location
+├── src/docker_swish_mcp/           # Original MCP server
+├── enhanced_tools/                 # NEW: Enhanced tools
+│   ├── enhanced_swish_tools.py    # Core enhanced functionality
+│   └── demo.py                    # Working demonstration
+├── ENHANCED_USAGE_GUIDE.md        # NEW: Complete usage guide
+├── QUICK_START_DEMO.md            # NEW: Quick start examples
+└── README.md                      # This file (updated)
 ```
 
 ### Contributing
-1. Follow MCP development best practices
-2. Use `uv` for dependency management
-3. Add type hints and comprehensive docstrings
-4. Test with real Prolog use cases
-5. Ensure stderr logging for MCP compatibility
-
-### Testing
-```bash
-# Test the server
-uv run python -m docker_swish_mcp.main
-
-# Test with MCP Inspector
-mcp dev src/docker_swish_mcp/main.py
-```
-
-## 🔗 Related Resources
-
-- [SWI-Prolog Documentation](https://www.swi-prolog.org/pldoc/doc_for?object=manual)
-- [SWISH Tutorial](https://swish.swi-prolog.org/example/tutorial.swinb)
-- [Model Context Protocol](https://modelcontextprotocol.io/)
-- [Logic Programming Guide](https://www.learnprolognow.org/)
-
-## ✨ What Makes This Different
-
-### Traditional Approach Problems:
-- Manual container start/stop commands
-- Complex setup and configuration
-- Container management mixed with logic programming
-- Unclear separation of concerns
-
-### This Solution:
-- **Zero Manual Container Management**: Everything automatic
-- **Prolog-Focused**: Tools designed for logic programming tasks
-- **Seamless Integration**: Container lifecycle handled transparently
-- **Educational Support**: Built-in learning assistance for Prolog
-
-### Perfect For:
-- **Logic Programming**: Rules, facts, reasoning, constraint solving
-- **Educational Use**: Learning Prolog with AI assistance
-- **Knowledge Bases**: Structured information and inference
-- **Deterministic Agents**: Rule-based decision systems (as described in the Prolog agent guide)
+1. Enhanced tools use standard Python patterns
+2. SWISH notebooks follow `.swinb` JSON format
+3. Background cells use `"background": true` property
+4. Web interface accessible at `http://localhost:3050`
 
 ## 📄 License
 
@@ -285,51 +295,46 @@ MIT License - see LICENSE file for details.
 
 ## 🆘 Troubleshooting
 
-### Common Issues
-
-1. **Docker not available**:
-   - Ensure Docker Desktop is running
-   - Check Docker permissions: `docker ps`
-   - Verify user is in docker group (Linux)
-
-2. **Container won't start**:
-   - Check port 3050 is available: `lsof -i :3050`
-   - Ensure sufficient disk space
-   - Check Docker logs: `docker logs swish-mcp-auto`
-
-3. **Prolog queries timeout**:
-   - Check SWISH container is responsive
-   - Use `get_swish_status()` to verify readiness
-   - Restart MCP server if needed
-
-4. **Permission errors**:
-   - Ensure data directory is writable
-   - Check Docker volume permissions
-   - Verify file ownership in `./swish-data/`
-
-### Debug Commands
+### "Enhanced tools not working"
 ```bash
 # Check container status
 docker ps | grep swish
 
-# View container logs
-docker logs swish-mcp-auto
+# Restart if needed  
+docker restart swish-mcp-auto
 
-# Test SWISH directly
-curl http://localhost:3050/
-
-# Check MCP server logs
-# (logs appear in Claude Desktop or terminal when running directly)
+# Run demo
+python enhanced_tools/demo.py
 ```
 
-## 🎯 Success Stories
+### "Can't access web interface"
+- Ensure port 3050 is available: `lsof -i :3050`
+- Check container logs: `docker logs swish-mcp-auto`
+- Verify container is running: `docker ps`
 
-This MCP server enables:
-- **Rapid Prototyping**: Quick logic rule development and testing
-- **Educational Support**: Learning Prolog with AI guidance
-- **Knowledge Engineering**: Building and testing knowledge bases
-- **Deterministic AI**: Creating rule-based, predictable agent behavior
+### "Notebooks not persisting"
+- Check `/data/notebooks/` directory exists
+- Ensure proper file permissions
+- Verify notebook file format (`.swinb` JSON)
+
+## 🎉 **Success Stories**
+
+**Before Enhanced Tools**:
+- "Tools seemed broken" ❌
+- "Knowledge keeps vanishing" ❌  
+- "Awkward to use" ❌
+- "No persistence" ❌
+
+**After Enhanced Tools**:
+- "Everything works intuitively!" ✅
+- "Knowledge persists perfectly" ✅
+- "Rich notebook interface" ✅  
+- "Great for cognitive architecture research" ✅
 
 ---
 
-**Ready to start logic programming with Claude? Install and begin reasoning!** 🧠✨
+**Ready to start? Run the demo and see the enhanced tools in action!** 🚀
+
+```bash
+python enhanced_tools/demo.py
+```
